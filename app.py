@@ -8,7 +8,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- 1. PAGE CONFIGURATION ---
-st.set_page_config(page_title="Model Progress Dashboard", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Model Progress Dashboard", layout="wide", initial_sidebar_state="collapsed")
 
 hide_st_style = """<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;} div[data-testid="stToolbar"] {visibility: hidden;}</style>"""
 st.markdown(hide_st_style, unsafe_allow_html=True)
