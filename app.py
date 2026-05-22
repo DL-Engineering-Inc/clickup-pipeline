@@ -347,7 +347,7 @@ with chart_col:
                 tickformat="%b %d, %Y",
                 tickangle=-40,
                 tickmode="auto",
-                nticks=28,
+                nticks=40,
                 automargin=True,
                 range=[sum_df["Date"].min(), max(sum_df["Date"].max(), today)],
                 rangeslider=dict(visible=False),
