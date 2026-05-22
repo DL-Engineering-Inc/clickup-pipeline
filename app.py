@@ -146,6 +146,10 @@ else:
 filtered_df = df if not st.session_state.saved_projects else df[df['Project Code'].isin(st.session_state.saved_projects)]
 final_df    = filtered_df if not st.session_state.saved_models else filtered_df[filtered_df['Model Name'].isin(st.session_state.saved_models)]
 
+# Weekdays only (Mon–Fri). Removing weekends here means neither chart needs
+# rangebreaks, avoiding the rangebreaks+rangeslider conflict that blanked chart 1.
+final_df = final_df[pd.to_datetime(final_df['Date']).dt.dayofweek < 5].copy()
+
 # --- 7. LEGEND MODE HELPER ---
 LEGEND_OPTIONS = ["🚫 Hidden", "📁 By Project", "📋 All Models"]
 
@@ -295,16 +299,24 @@ with chart_col:
             # Apply legend mode (grouped / full / hidden)
             apply_legend(fig_models, st.session_state.legend_mode, inside=True)
 
+            # Compute weekday-only tick positions: every 2 business days across the window.
+            # tickmode="array" means Plotly only labels exactly these dates — no weekends.
+            _biz_ticks = pd.bdate_range(
+                start=today - datetime.timedelta(days=30),
+                end=today + datetime.timedelta(days=30),
+            )[::2]
+            _tickvals = [str(d.date()) for d in _biz_ticks]
+            _ticktext  = [d.strftime("%b %d") for d in _biz_ticks]
+
             fig_models.update_xaxes(
                 type="date",
-                tickformat="%b %d",
+                tickmode="array",
+                tickvals=_tickvals,
+                ticktext=_ticktext,
                 tickangle=-40,
-                tickmode="auto",
-                nticks=28,
                 automargin=True,
                 range=[today - datetime.timedelta(days=30), today + datetime.timedelta(days=30)],
                 rangeslider=dict(visible=True, thickness=0.04, yaxis=dict(rangemode="match")),
-                rangebreaks=[dict(bounds=["sat", "mon"])],   # hide Saturday and Sunday
             )
             _yscale = st.session_state.saved_yscale
             fig_models.update_yaxes(
@@ -329,6 +341,7 @@ with chart_col:
                     "<b>📈 Aggregate KPI:</b> %{y:.4f}<br>"
                     "<extra></extra>"
                 ),
+                connectgaps=True,
                 line=dict(width=2.5, color="#1f77b4"),
                 marker=dict(size=8, color="#1f77b4", line=dict(width=1.5, color="white")),
             )
@@ -343,16 +356,19 @@ with chart_col:
                 yaxis_title_font=dict(size=20, family="Arial-Bold, Arial"),
                 hoverlabel=dict(font_size=16, font_family="Arial", align="left"),
             )
+            _biz_ticks_sum = pd.bdate_range(
+                start=today - datetime.timedelta(days=30),
+                end=today + datetime.timedelta(days=30),
+            )[::2]
             fig_sum.update_xaxes(
                 type="date",
-                tickformat="%b %d",
+                tickmode="array",
+                tickvals=[str(d.date()) for d in _biz_ticks_sum],
+                ticktext=[d.strftime("%b %d") for d in _biz_ticks_sum],
                 tickangle=-40,
-                tickmode="auto",
-                nticks=28,
                 automargin=True,
                 range=[today - datetime.timedelta(days=30), today + datetime.timedelta(days=30)],
                 rangeslider=dict(visible=False),
-                rangebreaks=[dict(bounds=["sat", "mon"])],   # hide Saturday and Sunday
             )
             _yscale = st.session_state.saved_yscale
             fig_sum.update_yaxes(
