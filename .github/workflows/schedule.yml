@@ -1,0 +1,33 @@
+name: Hourly ClickUp Sync Pipeline
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Tells the server to run at the 0-minute mark of every hour
+  workflow_dispatch:    # Adds a button so you can trigger it manually whenever you want
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Grab code from vault
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11' # Stable version
+
+      - name: Install required libraries
+        run: pip install -r requirements.txt
+
+      - name: Generate Secure Credentials File
+        run: |
+          echo '${{ secrets.GCP_CREDENTIALS }}' > creds.json
+
+      - name: Run Step 1 (Snapshotter)
+        env:
+          CLICKUP_TOKEN: ${{ secrets.CLICKUP_TOKEN }}
+        run: python snapshotter.py
+
+      - name: Run Step 2 (Expander)
+        run: python expander.py
