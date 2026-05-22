@@ -389,7 +389,6 @@ with chart_col:
                     showgrid=False,
                     zeroline=False,
                     showticklabels=False,
-                    rangemode="match",
                 )
             )
             st.plotly_chart(fig_models, use_container_width=True,
@@ -456,7 +455,6 @@ with chart_col:
                     showgrid=False,
                     zeroline=False,
                     showticklabels=False,
-                    rangemode="match",
                 )
             )
             st.plotly_chart(fig_sum, use_container_width=True,
