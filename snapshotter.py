@@ -8,7 +8,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- CONFIGURATION ---
-CLICKUP_TOKEN = "pk_210179546_YROCQFW4CFTEVM4YHH982CQ2HI93G2JE"
+CLICKUP_TOKEN = os.environ.get("CLICKUP_TOKEN")
 LIST_ID = "901701520995"  
 PROGRESSION_STATUS_FIELD_ID = "82d024f7-6f2f-4f5e-82b4-10146e18484e"
 GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1RE039NcnPeQtQrvI5zjLyADzAr-ZseBPUq388SxkV-Y/edit"
