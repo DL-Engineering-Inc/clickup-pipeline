@@ -299,8 +299,7 @@ with chart_col:
             # Apply legend mode (grouped / full / hidden)
             apply_legend(fig_models, st.session_state.legend_mode, inside=True)
 
-
-           # Let Plotly handle dynamic date ticking natively
+            # Let Plotly handle dynamic date ticking natively
             fig_models.update_xaxes(
                 type="date",
                 tickmode="auto",           # Restores dynamic label spacing on zoom
@@ -312,17 +311,7 @@ with chart_col:
                 range=[today - datetime.timedelta(days=15), today + datetime.timedelta(days=15)],
                 rangeslider=dict(visible=True, thickness=0.04, yaxis=dict(rangemode="match")),
             )
-
-            fig_models.update_xaxes(
-                type="date",
-                tickmode="array",
-                tickvals=_tickvals,
-                ticktext=_ticktext,
-                tickangle=-40,
-                automargin=True,
-                range=[today - datetime.timedelta(days=30), today + datetime.timedelta(days=30)],
-                rangeslider=dict(visible=True, thickness=0.04, yaxis=dict(rangemode="match")),
-            )
+            
             _yscale = st.session_state.saved_yscale
             fig_models.update_yaxes(
                 automargin=True,
@@ -361,7 +350,8 @@ with chart_col:
                 yaxis_title_font=dict(size=20, family="Arial-Bold, Arial"),
                 hoverlabel=dict(font_size=16, font_family="Arial", align="left"),
             )
-        # Let Plotly handle dynamic date ticking natively
+            
+            # Let Plotly handle dynamic date ticking natively
             fig_sum.update_xaxes(
                 type="date",
                 tickmode="auto",
@@ -372,16 +362,7 @@ with chart_col:
                 range=[today - datetime.timedelta(days=15), today + datetime.timedelta(days=15)],
                 rangeslider=dict(visible=False),
             )
-            fig_sum.update_xaxes(
-                type="date",
-                tickmode="array",
-                tickvals=[str(d.date()) for d in _biz_ticks_sum],
-                ticktext=[d.strftime("%b %d") for d in _biz_ticks_sum],
-                tickangle=-40,
-                automargin=True,
-                range=[today - datetime.timedelta(days=30), today + datetime.timedelta(days=30)],
-                rangeslider=dict(visible=False),
-            )
+            
             _yscale = st.session_state.saved_yscale
             fig_sum.update_yaxes(
                 automargin=True,
