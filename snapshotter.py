@@ -46,10 +46,37 @@ def get_clickup_tasks():
     while True:
         print(f" -> Requesting page {page} from ClickUp API...")
         url = f"https://api.clickup.com/api/v2/list/{LIST_ID}/task?subtasks=true&include_closed=false&limit=100&page={page}"
-        response = session.get(url, timeout=15)
-        
-        if response.status_code != 200:
-            print(f" [!] ClickUp Error: Failed to fetch tasks on page {page} (Status: {response.status_code})")
+
+        # Fetch this page with retry + exponential backoff. ClickUp occasionally
+        # responds slowly (especially with subtasks=true), and a single slow page
+        # used to crash the whole run with a ReadTimeout. We now retry transient
+        # network/5xx errors instead of giving up.
+        # timeout=(connect, read): allow up to 60s to read the response body.
+        response = None
+        max_retries = 5
+        base_delay = 5
+        for attempt in range(max_retries):
+            try:
+                response = session.get(url, timeout=(10, 60))
+                # Retry on transient server-side errors (rate limit / gateway issues)
+                if response.status_code in (429, 500, 502, 503, 504) and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                    print(f" [!] ClickUp returned {response.status_code} on page {page}. Retrying in {delay:.2f}s...")
+                    time.sleep(delay)
+                    continue
+                break
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                    print(f" [!] Network error on page {page} ({type(e).__name__}). Retrying in {delay:.2f}s...")
+                    time.sleep(delay)
+                else:
+                    print(f" [!] ClickUp Error: Page {page} failed after {max_retries} attempts ({type(e).__name__}).")
+                    raise
+
+        if response is None or response.status_code != 200:
+            status = response.status_code if response is not None else "no response"
+            print(f" [!] ClickUp Error: Failed to fetch tasks on page {page} (Status: {status})")
             break
             
         data = response.json()
