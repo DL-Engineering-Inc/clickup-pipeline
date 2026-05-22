@@ -24,12 +24,12 @@ js_code = """
 </script>
 """
 
-# Custom CSS for button styling and UI cleanup
+# Custom CSS for button styling and UI cleanup 
+# (Removed .stButton>button {width: 100%;} to keep buttons discreet/small)
 hide_st_style = """
             <style>
             #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
             div[data-testid="stToolbar"] {visibility: hidden;}
-            .stButton>button {width: 100%;}
             </style>
             """
 st.markdown(hide_st_style + js_code, unsafe_allow_html=True)
@@ -56,23 +56,26 @@ if not st.session_state["authenticated"]:
         st.stop()
 
 # --- 3. THE TOGGLE ENGINE ---
-# A invisible container to execute JS clicks
-st.markdown("""
-    <script>
-    function triggerSidebar() {
-        window.parent.document.querySelector('[data-testid="stSidebarCollapseButton"]').click();
-    }
-    </script>
-""", unsafe_allow_html=True)
+# Track the sidebar state (initially closed due to set_page_config)
+if "sidebar_is_open" not in st.session_state:
+    st.session_state["sidebar_is_open"] = False
 
-# Define column layout for buttons at the top of the dashboard
-col1, col2, col3 = st.columns([1, 1, 8])
-if col1.button("📂 Open Settings"):
-    st.components.v1.html("<script>window.parent.document.querySelector('[data-testid=\"stSidebarCollapseButton\"]').click();</script>")
-    st.rerun()
-if col2.button("📁 Close Settings"):
-    st.components.v1.html("<script>window.parent.document.querySelector('[data-testid=\"stSidebarCollapseButton\"]').click();</script>")
-    st.rerun()
+# Conditionally render only one discreet button on the far-left indent
+if not st.session_state["sidebar_is_open"]:
+    if st.button("📂 Open Settings"):
+        st.session_state["sidebar_is_open"] = True
+        st.session_state["trigger_js"] = True
+        st.rerun()
+else:
+    if st.button("📁 Close Settings"):
+        st.session_state["sidebar_is_open"] = False
+        st.session_state["trigger_js"] = True
+        st.rerun()
+
+# Execute the JS invisibly if a toggle was triggered
+if st.session_state.pop("trigger_js", False):
+    st.components.v1.html("<script>window.parent.document.querySelector('[data-testid=\"stSidebarCollapseButton\"]').click();</script>", height=0)
+
 
 # --- 4. DATA FETCHING & CACHING ---
 @st.cache_data(ttl=600)
