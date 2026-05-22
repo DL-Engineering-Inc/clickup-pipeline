@@ -299,14 +299,19 @@ with chart_col:
             # Apply legend mode (grouped / full / hidden)
             apply_legend(fig_models, st.session_state.legend_mode, inside=True)
 
-            # Compute weekday-only tick positions: every 2 business days across the window.
-            # tickmode="array" means Plotly only labels exactly these dates — no weekends.
-            _biz_ticks = pd.bdate_range(
-                start=today - datetime.timedelta(days=30),
-                end=today + datetime.timedelta(days=30),
-            )[::2]
-            _tickvals = [str(d.date()) for d in _biz_ticks]
-            _ticktext  = [d.strftime("%b %d") for d in _biz_ticks]
+
+           # Let Plotly handle dynamic date ticking natively
+            fig_models.update_xaxes(
+                type="date",
+                tickmode="auto",           # Restores dynamic label spacing on zoom
+                tickformat="%b %d",        # Clean 'Month Day' formatting
+                nticks=35,                 # Encourages Plotly to pack in daily ticks if screen space allows
+                tickangle=-40,
+                automargin=True,
+                # Narrow the default viewport slightly so Plotly has enough physical pixels to render daily ticks natively
+                range=[today - datetime.timedelta(days=15), today + datetime.timedelta(days=15)],
+                rangeslider=dict(visible=True, thickness=0.04, yaxis=dict(rangemode="match")),
+            )
 
             fig_models.update_xaxes(
                 type="date",
@@ -356,10 +361,17 @@ with chart_col:
                 yaxis_title_font=dict(size=20, family="Arial-Bold, Arial"),
                 hoverlabel=dict(font_size=16, font_family="Arial", align="left"),
             )
-            _biz_ticks_sum = pd.bdate_range(
-                start=today - datetime.timedelta(days=30),
-                end=today + datetime.timedelta(days=30),
-            )[::2]
+        # Let Plotly handle dynamic date ticking natively
+            fig_sum.update_xaxes(
+                type="date",
+                tickmode="auto",
+                tickformat="%b %d",
+                nticks=35,
+                tickangle=-40,
+                automargin=True,
+                range=[today - datetime.timedelta(days=15), today + datetime.timedelta(days=15)],
+                rangeslider=dict(visible=False),
+            )
             fig_sum.update_xaxes(
                 type="date",
                 tickmode="array",
