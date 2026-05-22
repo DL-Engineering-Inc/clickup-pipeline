@@ -107,4 +107,27 @@ else:
         if jitter_mode:
             final_df['Display KPI'] = final_df['KPI'] + final_df.groupby(['Date', 'KPI']).cumcount() * 0.003
             
-        fig_models = px.line(
+        fig_models = px.line(final_df, x="Date", y="Display KPI", color="Model Name", markers=True, height=calculated_height, custom_data=["Model Name", "KPI", "Overlapping Models", "Overlap Count"])
+        fig_models.update_traces(hovertemplate=("<b>🎯 Targeted Model:</b> %{customdata[0]}<br><b>📅 Date:</b> %{x}<br><b>📈 True KPI Value:</b> %{customdata[1]:.4f}<br>---------------------------------------<br><b>👥 All Models At This Coordinate (%{customdata[3]}):</b><br>%{customdata[2]}<extra></extra>"), hoverlabel_namelength=-1)
+        fig_models.update_layout(xaxis_title="<b>Date</b>", yaxis_title="<b>KPI</b>", legend_title="Active Models", legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01), margin=dict(l=85, r=20, t=30, b=85), hovermode="closest", font=dict(size=13), xaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), yaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), hoverlabel=dict(font_size=16, font_family="Arial", align="left"))
+        if group_by_project:
+            for trace in fig_models.data:
+                match = re.match(r'(D\d{6})', trace.name)
+                p_code = match.group(1) if match else "Standalone"
+                trace.legendgroup = p_code
+                trace.legendgrouptitle = dict(text=f"🏢 Project {p_code}")
+        fig_models.update_xaxes(type='date', tickformat="%b %d, %Y", dtick="D1", automargin=True)
+        fig_models.update_yaxes(automargin=True)
+        st.plotly_chart(fig_models, use_container_width=True)
+        if view_mode == "all": st.markdown("---")
+
+    # CHART 2: SUMMATION
+    if view_mode in ["all", "summation"]:
+        st.title("KPI Summation")
+        sum_df = final_df.groupby("Date", as_index=False)["KPI"].sum()
+        fig_sum = px.line(sum_df, x="Date", y="KPI", markers=True, height=550)
+        fig_sum.update_traces(hovertemplate=("<b>📅 Date:</b> %{x}<br><b>📈 Aggregate KPI:</b> %{y:.4f}<br><extra></extra>"))
+        fig_sum.update_layout(xaxis_title="<b>Date</b>", yaxis_title="<b>Total KPI</b>", margin=dict(l=85, r=20, t=30, b=85), hovermode="x unified", font=dict(size=13), xaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), yaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), hoverlabel=dict(font_size=16, font_family="Arial", align="left"))
+        fig_sum.update_xaxes(type='date', tickformat="%b %d, %Y", dtick="D1", automargin=True)
+        fig_sum.update_yaxes(automargin=True)
+        st.plotly_chart(fig_sum, use_container_width=True)
