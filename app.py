@@ -81,11 +81,10 @@ def save_settings():
     if 'ui_projects' in st.session_state: st.session_state.saved_projects = st.session_state.ui_projects
     if 'ui_models'   in st.session_state: st.session_state.saved_models   = st.session_state.ui_models
 
-if 'saved_jitter' not in st.session_state:
-    st.session_state.saved_jitter   = False
-    st.session_state.saved_projects = []
-    st.session_state.saved_models   = []
-    st.session_state.saved_yscale   = "Auto-Fit"
+if 'saved_jitter'   not in st.session_state: st.session_state.saved_jitter   = False
+if 'saved_projects' not in st.session_state: st.session_state.saved_projects = []
+if 'saved_models'   not in st.session_state: st.session_state.saved_models   = []
+if 'saved_yscale'   not in st.session_state: st.session_state.saved_yscale   = "Auto-Fit"
 
 # Legend mode: hidden by default so chart is compact; user can expand
 if 'legend_mode' not in st.session_state:
