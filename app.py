@@ -297,13 +297,14 @@ with chart_col:
 
             fig_models.update_xaxes(
                 type="date",
-                tickformat="%b %d, %Y",
+                tickformat="%b %d",
                 tickangle=-40,
                 tickmode="auto",
-                nticks=40,
+                nticks=28,
                 automargin=True,
-                range=[final_df["Date"].min(), max(final_df["Date"].max(), today)],
+                range=[today - datetime.timedelta(days=30), today + datetime.timedelta(days=30)],
                 rangeslider=dict(visible=True, thickness=0.04, yaxis=dict(rangemode="match")),
+                rangebreaks=[dict(bounds=["sat", "mon"])],   # hide Saturday and Sunday
             )
             _yscale = st.session_state.saved_yscale
             fig_models.update_yaxes(
@@ -344,13 +345,14 @@ with chart_col:
             )
             fig_sum.update_xaxes(
                 type="date",
-                tickformat="%b %d, %Y",
+                tickformat="%b %d",
                 tickangle=-40,
                 tickmode="auto",
-                nticks=40,
+                nticks=28,
                 automargin=True,
-                range=[sum_df["Date"].min(), max(sum_df["Date"].max(), today)],
+                range=[today - datetime.timedelta(days=30), today + datetime.timedelta(days=30)],
                 rangeslider=dict(visible=False),
+                rangebreaks=[dict(bounds=["sat", "mon"])],   # hide Saturday and Sunday
             )
             _yscale = st.session_state.saved_yscale
             fig_sum.update_yaxes(
