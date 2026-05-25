@@ -29,6 +29,8 @@ st.markdown("""
     div[data-testid="stToolbar"] {visibility: hidden;}
     /* Tighten up radio button row spacing */
     div[data-testid="stHorizontalBlock"] > div { gap: 0.25rem; }
+    /* Remove top gap above plotly charts */
+    div[data-testid="stPlotlyChart"] { margin-top: -2rem; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -270,7 +272,7 @@ with chart_col:
                 x="Date", y="Display KPI",
                 color="Model Name",
                 markers=True,
-                height= (calculated_height - 5),
+                height=calculated_height,
                 custom_data=["Model Name", "KPI", "Overlapping Models", "Overlap Count"]
             )
             fig_models.update_traces(
@@ -290,7 +292,7 @@ with chart_col:
                 xaxis_title="<b>Date</b>",
                 yaxis_title="<b>KPI</b>",
                 legend_title="Active Models",
-                margin=dict(l=85, r=20, t=30, b=110),
+                margin=dict(l=85, r=20, t=0, b=110),
                 hovermode="closest",
                 font=dict(size=13),
                 xaxis_title_font=dict(size=20, family="Arial-Bold, Arial"),
@@ -328,7 +330,7 @@ with chart_col:
         if view_mode in ["all", "summation"]:
             st.title("KPI Summation")
             sum_df  = final_df.groupby("Date", as_index=False)["KPI"].sum()
-            fig_sum = px.line(sum_df, x="Date", y="KPI", markers=True, height=(CHART_HEIGHT - 5))
+            fig_sum = px.line(sum_df, x="Date", y="KPI", markers=True, height=CHART_HEIGHT)
             fig_sum.update_traces(
                 hovertemplate=(
                     "<b>📅 Date:</b> %{x}<br>"
@@ -343,7 +345,7 @@ with chart_col:
                 xaxis_title="<b>Date</b>",
                 yaxis_title="<b>Total KPI</b>",
                 showlegend=False,
-                margin=dict(l=85, r=20, t=30, b=110),
+                margin=dict(l=85, r=20, t=0, b=110),
                 hovermode="closest",
                 font=dict(size=13),
                 xaxis_title_font=dict(size=20, family="Arial-Bold, Arial"),
