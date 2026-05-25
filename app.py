@@ -216,14 +216,15 @@ with chart_col:
         right_bound_if_centered = today + datetime.timedelta(days=44)
         
         if right_bound_if_centered < max_date:
-            # The 3-month window centered on today doesn't reach the end of the data
             x_start = today - datetime.timedelta(days=44)
             x_end = today + datetime.timedelta(days=44)
         else:
-            # The data ends sooner, anchor strictly to the end of the graph + 1 day to prevent cutoff
             x_end = max_date + datetime.timedelta(days=1)
             x_start = x_end - datetime.timedelta(days=88)
 
+        # Compute height once here so both charts can use it regardless of view_mode
+        unique_model_count = len(final_df['Model Name'].unique())
+        calculated_height = max(480, min(900, 300 + unique_model_count * 22))
 
         # ── CHART 1: INDIVIDUAL MODELS ────────────────────────────────────
         if view_mode in ["all", "models"]:
@@ -244,9 +245,6 @@ with chart_col:
                 st.session_state.legend_mode = chosen
 
             unique_model_count = len(final_df['Model Name'].unique())
-            # Height scales with model count so lines get more vertical pixels as
-            # the chart grows. Clamped to a sensible range for the ClickUp embed.
-            calculated_height = max(480, min(900, 300 + unique_model_count * 22))
 
             final_df = final_df.copy()
             final_df['Display KPI'] = final_df['KPI']
