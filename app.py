@@ -210,16 +210,16 @@ with chart_col:
         max_date_ts = pd.to_datetime(final_df['Date']).max()
         max_date = today if pd.isna(max_date_ts) else max_date_ts.date()
 
-        right_bound_if_centered = today + datetime.timedelta(days=45)
+        right_bound_if_centered = today + datetime.timedelta(days=44)
         
         if right_bound_if_centered < max_date:
             # The 3-month window centered on today doesn't reach the end of the data
-            x_start = today - datetime.timedelta(days=45)
-            x_end = today + datetime.timedelta(days=45)
+            x_start = today - datetime.timedelta(days=44)
+            x_end = today + datetime.timedelta(days=44)
         else:
             # The data ends sooner, anchor strictly to the end of the graph + 1 day to prevent cutoff
             x_end = max_date + datetime.timedelta(days=1)
-            x_start = x_end - datetime.timedelta(days=90)
+            x_start = x_end - datetime.timedelta(days=88)
 
 
         # ── CHART 1: INDIVIDUAL MODELS ────────────────────────────────────
