@@ -25,6 +25,7 @@ jobs:
           echo '${{ secrets.GCP_CREDENTIALS }}' > creds.json
 
       - name: Run Step 1 (Snapshotter)
+        continue-on-error: true
         env:
           CLICKUP_TOKEN: ${{ secrets.CLICKUP_TOKEN }}
         run: python snapshotter.py
