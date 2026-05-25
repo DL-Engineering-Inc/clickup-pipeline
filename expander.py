@@ -162,6 +162,29 @@ def extract_allowed_targets(task_name):
             if start_str.startswith('0'):
                 add_model_target(series, str(i))
 
+    # Handle ranges where the series prefix is itself numeric, e.g.:
+    #   "36-01 TO 04"       → 36-01, 36-02, 36-03, 36-04
+    #   "36-01 TO 36-04"    → 36-01, 36-02, 36-03, 36-04
+    #   "40-01 TO 04"       → 40-01, 40-02, 40-03, 40-04
+    # Pattern: BASE(2-4 digits) - STARTNUM  TO  [BASE-]? ENDNUM
+    # We require at least 2 digits in each part so single-digit tokens
+    # (which the letter-series path already handles) are not double-processed.
+    numeric_prefix_ranges = re.findall(
+        r'\b(\d{2,4})-(\d{2,4})\s+TO\s+(?:\d{2,4}-)?(\d{2,4})\b',
+        text_no_blocks
+    )
+    for base, start_str, end_str in numeric_prefix_ranges:
+        start, end = int(start_str), int(end_str)
+        # If end < start the author likely meant the suffix only (e.g. "36-01 TO 04"
+        # where 04 < 36). That is the normal case — expand suffix from start to end.
+        # Guard against obviously bad ranges (end much larger than start with no
+        # shared prefix context) by capping at 200 models per range.
+        if start <= end and (end - start) <= 200:
+            padding = len(start_str)
+            for i in range(start, end + 1):
+                num_str = f"{i:0{padding}d}"
+                add_model_target(base, num_str)
+
     pure_num_ranges = re.findall(r'\b(\d+)\s*(?:TO|-)\s*(\d+)\b', text_no_blocks)
     for start_str, end_str in pure_num_ranges:
         start, end = int(start_str), int(end_str)
