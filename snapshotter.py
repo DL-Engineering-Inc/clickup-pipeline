@@ -1,11 +1,15 @@
 import os
-import re  # <--- Added for project prefix regex verification
+import re
 import time
 import random
 import requests
-from datetime import datetime
+import numpy as np
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import gspread
 from google.oauth2.service_account import Credentials
+
+EASTERN = ZoneInfo("America/New_York")
 
 # --- CONFIGURATION ---
 CLICKUP_TOKEN = os.environ.get("CLICKUP_TOKEN")
@@ -95,7 +99,7 @@ def get_clickup_tasks():
     return all_tasks
 
 def main():
-    print(f"[{datetime.now()}] Initializing Status Synchronization Pipeline...")
+    print(f"[{datetime.now(tz=EASTERN)}] Initializing Status Synchronization Pipeline...")
     tasks = get_clickup_tasks()
     
     # 1. Parse active tasks from ClickUp matching all status and naming criteria
@@ -131,21 +135,28 @@ def main():
             start_date_str = ""
             start_date_ms = task.get("start_date")
             due_date_ms = task.get("due_date")
-            
-            # Format and capture the ClickUp start date string
+
+            def ms_to_eastern_date(ms):
+                """Convert a ClickUp UTC-millisecond timestamp to a date in Eastern time."""
+                return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc) \
+                               .astimezone(EASTERN).date()
+
+            # Format and capture the ClickUp start date string (Eastern time)
             if start_date_ms:
                 try:
-                    start_date_obj = datetime.fromtimestamp(int(start_date_ms) / 1000).date()
-                    start_date_str = start_date_obj.strftime("%Y-%m-%d")
+                    start_date_str = ms_to_eastern_date(start_date_ms).strftime("%Y-%m-%d")
                 except Exception:
                     pass
-            
-            # Calculate duration: (Due Date - Start Date)
+
+            # Calculate duration in BUSINESS DAYS (Mon–Fri only, no weekends).
+            # numpy.busday_count(start, end) counts weekdays in [start, end).
+            # We add 1 to make the range inclusive of the end date, matching
+            # how ClickUp displays the span.
             if due_date_ms and start_date_ms:
                 try:
-                    due_date_obj = datetime.fromtimestamp(int(due_date_ms) / 1000).date()
-                    start_date_obj = datetime.fromtimestamp(int(start_date_ms) / 1000).date()
-                    duration_val = (due_date_obj - start_date_obj).days
+                    start_date_obj = ms_to_eastern_date(start_date_ms)
+                    due_date_obj   = ms_to_eastern_date(due_date_ms)
+                    duration_val   = int(np.busday_count(start_date_obj, due_date_obj))
                 except Exception:
                     pass
                     
@@ -190,7 +201,7 @@ def main():
     # 4. Synchronized Evaluation & Changes Phase
     rows_to_delete = set()
     matched_log_names = set()
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = datetime.now(tz=EASTERN).strftime("%Y-%m-%d")
 
     print("\n[Synchronizing Log Table Records]")
     for block in parent_blocks:
