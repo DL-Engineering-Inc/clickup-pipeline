@@ -133,6 +133,7 @@ def main():
         if progression_status == "FIRST MARKUP" and native_status == "TIMELINE" and re.match(r'^D\d{6}', name):
             duration_val = ""
             start_date_str = ""
+            due_date_str = ""
             start_date_ms = task.get("start_date")
             due_date_ms = task.get("due_date")
 
@@ -145,6 +146,13 @@ def main():
             if start_date_ms:
                 try:
                     start_date_str = ms_to_eastern_date(start_date_ms).strftime("%Y-%m-%d")
+                except Exception:
+                    pass
+
+            # Format and capture the ClickUp due date string (Eastern time)
+            if due_date_ms:
+                try:
+                    due_date_str = ms_to_eastern_date(due_date_ms).strftime("%Y-%m-%d")
                 except Exception:
                     pass
 
@@ -162,7 +170,8 @@ def main():
                     
             active_first_markup_tasks[name] = {
                 "duration": duration_val,
-                "start_date": start_date_str
+                "start_date": start_date_str,
+                "due_date": due_date_str
             }
 
     print(f" -> Found {len(active_first_markup_tasks)} items matching [Status: TIMELINE], [Progression: FIRST MARKUP], and [Naming Code: D######].")
@@ -213,11 +222,13 @@ def main():
             task_info = active_first_markup_tasks[task_name]
             duration_str = str(task_info["duration"])
             st_date_str = task_info["start_date"]
+            due_date_str = task_info["due_date"]
             
-            # Action: Target Update -> Sync Date (Col A), Duration (Col G), and Start Date (Col K)
+            # Action: Target Update -> Sync Date (Col A), Duration (Col G), Start Date (Col K), Due Date (Col L)
             execute_with_retry(log_sheet.update_cell, p_row, 1, today_str)
             execute_with_retry(log_sheet.update_cell, p_row, 7, duration_str)   # Column G
             execute_with_retry(log_sheet.update_cell, p_row, 11, st_date_str)   # Column K
+            execute_with_retry(log_sheet.update_cell, p_row, 12, due_date_str)  # Column L
             print(f" [≠] UPDATED: Synced row {p_row} metrics for tracking log item '{task_name}'.")
         else:
             # Action: Clean Deletion -> Queue the parent row and all child rows for removal
@@ -231,10 +242,11 @@ def main():
         if task_name not in matched_log_names:
             duration_str = str(task_info["duration"])
             st_date_str = task_info["start_date"]
+            due_date_str = task_info["due_date"]
             
             # Row Grid Layout Mapping Matrix:
-            # A: today_str | B: task_name | C: "" | D: "" | E: "" | F: "" | G: duration_str | H: "" | I: "" | J: "" | K: st_date_str
-            fresh_insertions.append([today_str, task_name, "", "", "", "", duration_str, "", "", "", st_date_str])
+            # A: today_str | B: task_name | C: "" | D: "" | E: "" | F: "" | G: duration_str | H: "" | I: "" | J: "" | K: st_date_str | L: due_date_str
+            fresh_insertions.append([today_str, task_name, "", "", "", "", duration_str, "", "", "", st_date_str, due_date_str])
             print(f" [✔] NEW RECORD DETECTED: Queued '{task_name}' for entry.")
 
     if fresh_insertions:
