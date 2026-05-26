@@ -426,15 +426,21 @@ with chart_col:
 
             apply_legend(fig_models, st.session_state.legend_mode, inside=True)
 
+            # One tick per calendar day for all views except All Time.
+            # dtick in ms (86400000 = 1 day) forces exactly one label per date.
+            _tick_kwargs1 = (
+                dict(tickmode="auto", nticks=20)
+                if st.session_state.time_view == "All Time"
+                else dict(tickmode="linear", dtick=86400000)
+            )
             fig_models.update_xaxes(
                 type="date",
-                tickmode="auto",
                 tickformat="%b %d",
-                nticks=_nticks1,
                 tickangle=-40,
                 automargin=True,
                 range=[x_start, x_end],
                 rangeslider=dict(visible=True, thickness=0.04, yaxis=dict(rangemode="match")),
+                **_tick_kwargs1,
             )
             
             _yscale = st.session_state.saved_yscale
@@ -444,7 +450,7 @@ with chart_col:
                 rangemode="tozero" if _yscale == "From Zero" else "normal",
                 zeroline=False,
             )
-            st.plotly_chart(fig_models, use_container_width=True)
+            st.plotly_chart(fig_models, width='stretch')
 
             if view_mode == "all":
                 st.markdown("---")
@@ -481,15 +487,19 @@ with chart_col:
                 hoverlabel=dict(font_size=16, font_family="Arial", align="left", namelength=-1),
             )
             
+            _tick_kwargs2 = (
+                dict(tickmode="auto", nticks=20)
+                if st.session_state.time_view2 == "All Time"
+                else dict(tickmode="linear", dtick=86400000)
+            )
             fig_sum.update_xaxes(
                 type="date",
-                tickmode="auto",
                 tickformat="%b %d",
-                nticks=_nticks2,
                 tickangle=-40,
                 automargin=True,
                 range=[x_start2, x_end2],
                 rangeslider=dict(visible=False),
+                **_tick_kwargs2,
             )
             
             _yscale = st.session_state.saved_yscale
@@ -499,4 +509,4 @@ with chart_col:
                 rangemode="tozero" if _yscale == "From Zero" else "normal",
                 zeroline=False,
             )
-            st.plotly_chart(fig_sum, use_container_width=True)
+            st.plotly_chart(fig_sum, width='stretch')
