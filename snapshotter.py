@@ -173,32 +173,39 @@ def main():
     print("\n[Connecting to Google Sheets]")
     client = get_google_sheet_client()
     log_sheet = client.open_by_url(GOOGLE_SHEET_URL).sheet1
-    all_sheet_rows = log_sheet.get_all_values()
-    print(" -> Connection Established. Sheet data cached.")
+    all_sheet_rows = execute_with_retry(log_sheet.get_all_values)
+    print(f" -> Connection Established. Sheet data cached ({len(all_sheet_rows)} rows).")
 
     # 3. Structural Block Mapping Pass
     parent_blocks = []
     current_block = None
     
-    for idx, cells in enumerate(all_sheet_rows):
-        row_num = idx + 1
-        if row_num == 1:  # Skip headers
-            continue
-            
-        col_a = cells[0].strip() if len(cells) > 0 else ""
-        col_b = cells[1].strip() if len(cells) > 1 else ""
-        
-        if col_b:  # Found a parent task row header
-            if current_block:
-                parent_blocks.append(current_block)
-            current_block = {"name": col_b, "parent_row": row_num, "all_rows": [row_num]}
-        elif current_block and not col_a and not col_b:
-            col_c = cells[2].strip() if len(cells) > 2 else ""
-            if col_c:
-                current_block["all_rows"].append(row_num)
+    try:
+        for idx, cells in enumerate(all_sheet_rows):
+            row_num = idx + 1
+            if row_num == 1:  # Skip headers
+                continue
                 
-    if current_block:
-        parent_blocks.append(current_block)
+            col_a = cells[0].strip() if len(cells) > 0 else ""
+            col_b = cells[1].strip() if len(cells) > 1 else ""
+            
+            if col_b:  # Found a parent task row header
+                if current_block:
+                    parent_blocks.append(current_block)
+                current_block = {"name": col_b, "parent_row": row_num, "all_rows": [row_num]}
+            elif current_block and not col_a and not col_b:
+                col_c = cells[2].strip() if len(cells) > 2 else ""
+                if col_c:
+                    current_block["all_rows"].append(row_num)
+                    
+        if current_block:
+            parent_blocks.append(current_block)
+
+    except Exception as e:
+        print(f"\n[!] FATAL ERROR during sheet structure mapping at row {row_num}: {type(e).__name__}: {e}")
+        raise
+
+    print(f" -> Mapped {len(parent_blocks)} parent blocks from sheet.")
 
     # 4. Synchronized Evaluation & Changes Phase
     rows_to_delete = set()
@@ -206,38 +213,40 @@ def main():
     today_str = datetime.now(tz=EASTERN).strftime("%Y-%m-%d")
 
     print("\n[Synchronizing Log Table Records]")
-    for block in parent_blocks:
-        task_name = block["name"]
-        p_row = block["parent_row"]
-        
-        if task_name in active_first_markup_tasks:
-            matched_log_names.add(task_name)
-            task_info = active_first_markup_tasks[task_name]
-            duration_str  = str(task_info["duration"])
-            st_date_str   = task_info["start_date"]
-            due_date_str  = task_info["due_date"]
+    print("\n[Synchronizing Log Table Records]")
+    try:
+        for block in parent_blocks:
+            task_name = block["name"]
+            p_row = block["parent_row"]
 
-            # Batch all four column updates into a single API call to minimise
-            # write-quota consumption. Columns written: A, G, K, L.
-            # Columns B-F, H-J are left untouched by using named ranges.
-            execute_with_retry(log_sheet.update,
-                range_name=f"A{p_row}",
-                values=[[today_str]],
-                value_input_option="USER_ENTERED")
-            execute_with_retry(log_sheet.update,
-                range_name=f"G{p_row}:G{p_row}",
-                values=[[duration_str]],
-                value_input_option="USER_ENTERED")
-            execute_with_retry(log_sheet.update,
-                range_name=f"K{p_row}:L{p_row}",
-                values=[[st_date_str, due_date_str]],
-                value_input_option="USER_ENTERED")
-            print(f" [≠] UPDATED: Synced row {p_row} metrics for tracking log item '{task_name}'.")
-        else:
-            # Action: Clean Deletion -> Queue the parent row and all child rows for removal
-            for r in block["all_rows"]:
-                rows_to_delete.add(r)
-            print(f" [×] REMOVAL DETECTED: Task '{task_name}' no longer matches criteria. Queued for extraction.")
+            if task_name in active_first_markup_tasks:
+                matched_log_names.add(task_name)
+                task_info = active_first_markup_tasks[task_name]
+                duration_str  = str(task_info["duration"])
+                st_date_str   = task_info["start_date"]
+                due_date_str  = task_info["due_date"]
+
+                execute_with_retry(log_sheet.update,
+                    range_name=f"A{p_row}",
+                    values=[[today_str]],
+                    value_input_option="USER_ENTERED")
+                execute_with_retry(log_sheet.update,
+                    range_name=f"G{p_row}:G{p_row}",
+                    values=[[duration_str]],
+                    value_input_option="USER_ENTERED")
+                execute_with_retry(log_sheet.update,
+                    range_name=f"K{p_row}:L{p_row}",
+                    values=[[st_date_str, due_date_str]],
+                    value_input_option="USER_ENTERED")
+                print(f" [\u2260] UPDATED: Synced row {p_row} metrics for tracking log item '{task_name}'.")
+            else:
+                for r in block["all_rows"]:
+                    rows_to_delete.add(r)
+                print(f" [\u00d7] REMOVAL DETECTED: Task '{task_name}' no longer matches criteria. Queued for extraction.")
+
+    except Exception as e:
+        print(f"\n[!] FATAL ERROR during sync loop at task '{task_name}', row {p_row}: {type(e).__name__}: {e}")
+        raise
 
     # 5. Append Phase for Completely New Tasks
     fresh_insertions = []
