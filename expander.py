@@ -356,34 +356,14 @@ def main():
 
         # --- KPI DIFFICULTY INDEX SHEET SETUP ---
         print("\n[Loading KPI Difficulty Index Sheet]")
-        kpi_index_wb     = client.open_by_url(KPI_INDEX_SHEET_URL)
-        kpi_index_sheet  = kpi_index_wb.sheet1
-        kpi_index_all    = execute_with_retry(kpi_index_sheet.get_all_values)
+        kpi_index_wb    = client.open_by_url(KPI_INDEX_SHEET_URL)
+        kpi_index_sheet = kpi_index_wb.sheet1
+        kpi_index_all   = execute_with_retry(kpi_index_sheet.get_all_values)
 
         # Load dynamic sq ft → difficulty bracket table from rows 2-4
         difficulty_brackets = load_difficulty_brackets(kpi_index_all)
         print(f" -> Loaded {len(difficulty_brackets)} difficulty brackets.")
 
-        # Build lookup of existing model rows (row 7 onwards, 0-indexed from 6)
-        # key: model name upper  →  {row_num (1-based), difficulty, elevations, sq_ft, due_date}
-        kpi_index_lookup = {}
-        for i, r in enumerate(kpi_index_all[6:]):
-            if len(r) > 0 and r[0].strip():
-                key = r[0].strip().upper()
-                kpi_index_lookup[key] = {
-                    "row_num":    i + 7,
-                    "difficulty": r[1].strip() if len(r) > 1 else "",
-                    "elevations": r[2].strip() if len(r) > 2 else "",
-                    "sq_ft":      r[3].strip() if len(r) > 3 else "",
-                    "due_date":   r[4].strip() if len(r) > 4 else "",
-                }
-        print(f" -> Found {len(kpi_index_lookup)} existing models in KPI Index.")
-
-        # Accumulators for KPI Index writes — applied once after all parent rows are processed
-        kpi_index_pending_updates = []  # dicts: row_num, elevations, sq_ft, due_date, update_b, auto_diff
-        kpi_index_pending_inserts = []  # [model_name, difficulty, elevations, sq_ft, due_date]
-        kpi_seen_models = set()         # prevents double-queueing across parent tasks
-        
         all_log_rows = log_sheet.get_all_values()
         
         print("\nScanning rows and executing architectural upsert calculations...")
@@ -574,66 +554,12 @@ def main():
                     model_output      = item["model_output"]
                     num_elevations    = item["num_elevations"]
                     sq_ft_output      = item["sq_ft_output"]
-                    difficulty_output = item["difficulty_output"]   # auto-calculated
+                    difficulty_output = item["difficulty_output"]
                     start_date_output = item["final_start_date"]
-                    is_block          = item["is_block"]
 
-                    # Parent duration (Col G) — denominator of loading quotient
+                    # Calculate Loading Quotient → Difficulty / Parent Duration (Col G)
                     try:
                         parent_col_g = float(row[6].strip()) if len(row) > 6 and row[6].strip() else 0
-                    except Exception:
-                        parent_col_g = 0
-
-                    parent_col_k_str = row[10].strip() if len(row) > 10 else ""
-                    kpi_due_date     = row[11].strip() if len(row) > 11 else ""
-                    full_model_name  = f"{project_code} - {model_output}"
-                    kpi_key          = full_model_name.upper()
-
-                    # ── KPI INDEX DIFFICULTY SYNC ──────────────────────────────────
-                    # Non-block models only — blocks have a fixed difficulty of 1 and
-                    # are not tracked individually in the KPI Index sheet.
-                    if not is_block:
-                        if kpi_key in kpi_index_lookup:
-                            stored = kpi_index_lookup[kpi_key]
-                            stored_diff = stored["difficulty"]
-
-                            if stored_diff:
-                                # Use stored value (may be manual override) — never overwrite col B
-                                try:
-                                    difficulty_output = str(round(float(stored_diff), 2))
-                                except ValueError:
-                                    pass  # keep auto-calculated
-                                update_b = False
-                            else:
-                                # Col B is empty — fill with auto-calculated value
-                                update_b = True
-
-                            # Queue col C:E sync (elevations, sq_ft, due_date), optionally col B
-                            if kpi_key not in kpi_seen_models:
-                                kpi_seen_models.add(kpi_key)
-                                kpi_index_pending_updates.append({
-                                    "row_num":    stored["row_num"],
-                                    "elevations": str(num_elevations),
-                                    "sq_ft":      str(sq_ft_output),
-                                    "due_date":   kpi_due_date,
-                                    "update_b":   update_b,
-                                    "auto_diff":  str(difficulty_output),
-                                })
-                        else:
-                            # Brand-new model — queue insert with auto-calculated difficulty
-                            if kpi_key not in kpi_seen_models:
-                                kpi_seen_models.add(kpi_key)
-                                kpi_index_pending_inserts.append([
-                                    full_model_name,
-                                    str(difficulty_output),
-                                    str(num_elevations),
-                                    str(sq_ft_output),
-                                    kpi_due_date,
-                                ])
-                    # ──────────────────────────────────────────────────────────────
-
-                    # Loading quotient uses the (potentially overridden) difficulty
-                    try:
                         model_difficulty = float(difficulty_output) if difficulty_output else 0
                         if parent_col_g != 0 and model_difficulty != 0:
                             loading_quotient = round(model_difficulty / parent_col_g, 4)
@@ -641,7 +567,10 @@ def main():
                             loading_quotient = ""
                     except Exception:
                         loading_quotient = ""
-                    
+
+                    # Target unique tracking code from Parent Task Row Column K
+                    parent_col_k_str = row[10].strip() if len(row) > 10 else ""
+
                     # Deduplicate array staging to eliminate dual updates
                     if model_output.upper() not in seen_models_this_pass:
                         seen_models_this_pass.add(model_output.upper())
@@ -824,41 +753,6 @@ def main():
                 print(f"     [!] Error processing row index {idx + 1}: {str(inner_e)}")
 
         print("\nSUCCESS: Multi-file structural matrix execution complete.")
-
-        # ── KPI DIFFICULTY INDEX BATCH SYNC ───────────────────────────────────
-        # Apply all accumulated KPI Index sheet writes in one pass AFTER all
-        # parent rows have been processed, to minimise quota consumption.
-        if kpi_index_pending_updates or kpi_index_pending_inserts:
-            print(f"\n[Syncing KPI Difficulty Index Sheet]")
-
-            for upd in kpi_index_pending_updates:
-                rn = upd["row_num"]
-                if upd["update_b"]:
-                    # Col B was empty — fill difficulty + sync C:E
-                    execute_with_retry(
-                        kpi_index_sheet.update,
-                        range_name=f"B{rn}:E{rn}",
-                        values=[[upd["auto_diff"], upd["elevations"], upd["sq_ft"], upd["due_date"]]],
-                        value_input_option="USER_ENTERED"
-                    )
-                else:
-                    # Col B has a value (auto or manual) — only sync C:E
-                    execute_with_retry(
-                        kpi_index_sheet.update,
-                        range_name=f"C{rn}:E{rn}",
-                        values=[[upd["elevations"], upd["sq_ft"], upd["due_date"]]],
-                        value_input_option="USER_ENTERED"
-                    )
-                print(f" [≠] KPI INDEX SYNC: Row {rn} updated.")
-
-            if kpi_index_pending_inserts:
-                execute_with_retry(
-                    kpi_index_sheet.append_rows,
-                    kpi_index_pending_inserts,
-                    value_input_option="USER_ENTERED"
-                )
-                print(f" [✔] KPI INDEX INSERT: Added {len(kpi_index_pending_inserts)} new model rows.")
-        # ─────────────────────────────────────────────────────────────────────
             
     except Exception as e:
         print(f"\nEngine Failed: {str(e)}")
