@@ -190,7 +190,9 @@ def extract_allowed_targets(task_name):
             else:
                 allowed_models.add(base_series)
 
-    # FIX: Restored closing brace token target configuration bounds {1,4}
+    # Letter-series range handler: "SD-01 TO 04", "BB 1 TO 8"
+    # Requires a letter series prefix ([A-Z-]{1,4}) so numeric prefixes like 40, 45 are
+    # handled separately below.
     range_matches = re.findall(r'\b([A-Z-]{1,4})\s*-?\s*(\d+)\s*(?:TO|-)\s*(?:[A-Z-]{1,4}\s*-?\s*)?(\d+)\b', text_no_blocks)
     for series, start_str, end_str in range_matches:
         start, end = int(start_str), int(end_str)
@@ -201,14 +203,45 @@ def extract_allowed_targets(task_name):
             if start_str.startswith('0'):
                 add_model_target(series, str(i))
 
-    numeric_prefix_ranges = re.findall(r'\b(\d{2,4})-(\d{2,4})\s+TO\s+(?:\d{2,4}-)?(\d{2,4})\b', text_no_blocks)
-    for base, start_str, end_str in numeric_prefix_ranges:
-        start, end = int(start_str), int(end_str)
-        if start <= end and (end - start) <= 200:
-            padding = len(start_str)
-            for i in range(start, end + 1):
-                num_str = f"{i:0{padding}d}"
-                add_model_target(base, num_str)
+    # Comprehensive numeric-prefix sequence handler.
+    # Covers all of: ranges ("45-1 to 7"), comma-separated lists ("40-1, 3, 7, 9"),
+    # and mixed sequences ("45-1 to 7, 10 to 12").
+    # All-digit prefixes (40, 45, 36, etc.) are invisible to the letter-series patterns
+    # above, which require [A-Z-]{1,4}. This iterator also emits zero-padded variants
+    # (e.g. both "1" and "01") so a task listing "45-1" matches a schedule row "45-01".
+    for pfx_m in re.finditer(r'\b(\d{2,4})-(\d+)', text_no_blocks):
+        base      = pfx_m.group(1)
+        first_num = pfx_m.group(2)
+        numbers   = [first_num]
+        pos       = pfx_m.end()
+
+        # Walk forward consuming "TO N" and ", N" continuations that follow
+        # the initial "BASE-N" anchor. Stop at any non-numeric context.
+        while pos < len(text_no_blocks):
+            to_m = re.match(r'\s+(?:TO|to)\s+(\d+)', text_no_blocks[pos:], re.IGNORECASE)
+            if to_m:
+                # Expand the previous number through the range end
+                range_start = int(numbers.pop())
+                range_end   = int(to_m.group(1))
+                for i in range(range_start, range_end + 1):
+                    numbers.append(str(i))
+                pos += to_m.end()
+                continue
+
+            csv_m = re.match(r'\s*,\s*(\d+)', text_no_blocks[pos:])
+            if csv_m:
+                numbers.append(csv_m.group(1))
+                pos += csv_m.end()
+                continue
+
+            break  # Reached a non-numeric/non-separator character
+
+        for num_str in numbers:
+            add_model_target(base, num_str)
+            # Always emit a zero-padded (minimum 2-digit) variant so that a task
+            # listing "45-1" correctly matches a schedule row formatted as "45-01".
+            if not num_str.startswith('0') and len(num_str) < 2:
+                add_model_target(base, num_str.zfill(2))
 
     pure_num_ranges = re.findall(r'\b(\d+)\s*(?:TO|-)\s*(\d+)\b', text_no_blocks)
     for start_str, end_str in pure_num_ranges:
@@ -220,26 +253,18 @@ def extract_allowed_targets(task_name):
     compound_match = re.search(r'\b([A-Z-]{1,4})\s*[-]?\s*(\d+)\s*-\s*([^-\n]+)', text_no_blocks)
     if compound_match:
         prefix_series = compound_match.group(1)
-        base_num = compound_match.group(2)
-        suffixes = parse_compound_suffixes(compound_match.group(3))
+        base_num      = compound_match.group(2)
+        suffixes      = parse_compound_suffixes(compound_match.group(3))
         for suf in suffixes:
             add_model_target(prefix_series, f"{base_num}-{suf}")
 
-    # Handle letter-series parenthetical ranges: "BB (1 TO 8)" or "BBs (1, to 8)"
-    # The optional comma handles cases like "(1, to 8)" which broke the original regex.
+    # Parenthetical range: "BB (1 TO 8)" or "BBs (1, to 8)".
+    # The optional comma between the start number and TO handles the comma-space variant.
     p23 = re.search(r'\b([A-Z-]{1,4})\s*\(\s*(\d+)\s*,?\s*(?:TO|-)\s*(\d+)\s*\)', text_no_blocks)
     if p23:
         series = p23.group(1)
         for i in range(int(p23.group(2)), int(p23.group(3)) + 1):
             add_model_target(series, str(i))
-
-    # Handle numeric-prefix comma-separated lists: "40-1, 3, 7, 9" → 40-1, 40-3, 40-7, 40-9
-    # and "45-8, 9, 13" → 45-8, 45-9, 45-13. These have an all-digit series prefix so
-    # the letter-series patterns above never fire for them.
-    numeric_prefix_csv = re.findall(r'\b(\d{2,4})-(\d+(?:\s*,\s*\d+)+)', text_no_blocks)
-    for base, nums_str in numeric_prefix_csv:
-        for num in re.findall(r'\d+', nums_str):
-            add_model_target(base, num)
 
     p1 = re.search(r'\b([A-Z-]{1,4})\s*(\d+(?:\s*,\s*\d+)+)', text_no_blocks)
     if p1:
@@ -247,6 +272,8 @@ def extract_allowed_targets(task_name):
         for n in p1.group(2).split(','):
             add_model_target(series, n.strip())
 
+    # Catch-all token sweep: adds every alphanumeric token from the task title.
+    # This is intentionally broad; non-model English words are removed below.
     all_tokens = re.findall(r'\b([A-Z0-9-]+)\b', text_no_blocks)
     for token in all_tokens:
         allowed_models.add(token)
@@ -255,7 +282,15 @@ def extract_allowed_targets(task_name):
             allowed_models.add(token[:-1])
             allowed_models.add(token[:-1].replace('-', ''))
 
-    return project_code, allowed_models, allowed_blocks, allowed_lots
+    # Remove common English words that the catch-all sweep may have introduced.
+    # Without this, a task title like "...( priority models)" causes "MODEL" to
+    # enter allowed_models and incorrectly match the spreadsheet header row.
+    _non_model_words = {
+        "MODEL", "MODELS", "PRIORITY", "REVIEW", "FIRST", "SECOND", "THIRD",
+        "AND", "THE", "FOR", "WITH", "TO", "OR", "OF", "A", "AN", "IN",
+        "LOT", "LOTS", "BLOCK", "BLOCKS",
+    }
+    allowed_models -= _non_model_words
 
 def parse_elevation_count(elevation_cell):
     if not elevation_cell or str(elevation_cell).strip() in ["-", ""]:
