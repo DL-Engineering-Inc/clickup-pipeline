@@ -10,12 +10,18 @@ import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-# --- CONFIGURATION ---
+# --- DATABASE AND ROOT CONFIGURATION ---
 GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1RE039NcnPeQtQrvI5zjLyADzAr-ZseBPUq388SxkV-Y/edit?usp=sharing"
 DRIVE_FOLDER_ID = "1zHACpi08NE9D9tg5HTb_jbkjV6RpKI2v"
 DIFFICULTY_LOOKUP_URL = "https://docs.google.com/spreadsheets/d/1xJwiD1F_p6BFm4-sjEEZ0U1xCMqqUEU6TwQSUmQxW5s/edit"
 
 def get_google_credentials():
+    """
+    Initializes authorized Google Service Account credentials.
+    
+    Returns:
+        Credentials: Authenticated Google API service account token instance.
+    """
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
@@ -23,7 +29,9 @@ def get_google_credentials():
     return Credentials.from_service_account_file("creds.json", scopes=scopes)
 
 def execute_with_retry(func, *args, **kwargs):
-    """Automatic exponential backoff handler for Google API rate limits."""
+    """
+    Executes a Google API method using exponential backoff to handle rate limits (HTTP 429).
+    """
     max_retries = 5
     base_delay = 5
     for attempt in range(max_retries):
@@ -40,11 +48,14 @@ def execute_with_retry(func, *args, **kwargs):
             raise e
 
 def load_difficulty_tiers(client, url):
-    """Fetches the lookup sheet and converts the threshold points into tier boundaries."""
+    """
+    Downloads structural scale tier limits from the central configuration layout.
+    Processes rows sequentially as unique lower-bound threshold metrics.
+    """
     try:
         print(f" -> Downloading dynamic tier maps from: {url}")
         sheet = client.open_by_url(url).sheet1
-        raw_rows = sheet.get_all_values()[1:]  # Safely drop header row
+        raw_rows = sheet.get_all_values()[1:]  
         
         parsed_rows = []
         for row in raw_rows:
@@ -54,13 +65,13 @@ def load_difficulty_tiers(client, url):
             difficulty_val = float(row[1].strip())
             parsed_rows.append((sqft_threshold, difficulty_val))
             
-        # Sort by square footage threshold ascendingly to ensure accurate evaluations
+        # Sort thresholds in ascending order for boundary grouping
         parsed_rows.sort(key=lambda x: x[0])
         
         tiers = []
         for i in range(len(parsed_rows)):
             min_val = parsed_rows[i][0]
-            # Next row's threshold forms the exclusive upper limit. Last row goes to infinity.
+            # The next row's lower bound establishes an exclusive upper limit for the current tier
             max_val = parsed_rows[i+1][0] if i + 1 < len(parsed_rows) else float('inf')
             difficulty_val = parsed_rows[i][1]
             
@@ -78,7 +89,9 @@ def load_difficulty_tiers(client, url):
         ]
 
 def list_spreadsheets_in_folder(folder_id, service):
-    """Scans the designated Google Drive folder and maps file names to their unique file IDs."""
+    """
+    Retrieves and catalogs workbook names along with their alphanumeric Drive IDs.
+    """
     files_map = {}
     page_token = None
     
@@ -105,6 +118,9 @@ def list_spreadsheets_in_folder(folder_id, service):
     return files_map
 
 def parse_number_sequence(seg):
+    """
+    Parses and expands numeric sequences and range expressions (e.g., '1 TO 5', '12-18').
+    """
     seg = seg.upper()
     numbers = set()
     ranges = re.findall(r'(\d+)\s*(?:TO|-)\s*(\d+)', seg)
@@ -118,6 +134,9 @@ def parse_number_sequence(seg):
     return sorted(list(numbers))
 
 def parse_compound_suffixes(blob):
+    """
+    Deconstructs list items and continuous ranges from compound task suffix lines.
+    """
     blob = blob.upper()
     suffixes = []
     range_match = re.search(r'(\d+)\s*(?:TO|-)\s*(\d+)', blob)
@@ -133,6 +152,9 @@ def parse_compound_suffixes(blob):
     return suffixes
 
 def is_wildcard_numeric_match(allowed_model, norm_model_cell):
+    """
+    Validates singular vs plural structural suffix combinations (e.g., matching trailing 's' tokens).
+    """
     if allowed_model.endswith('S'):
         base = allowed_model[:-1]
         if base.isdigit():
@@ -144,7 +166,10 @@ def is_wildcard_numeric_match(allowed_model, norm_model_cell):
     return False
 
 def extract_allowed_targets(task_name):
-    """Advanced multi-token tokenization engine processing Models, Blocks, and Lots."""
+    """
+    Advanced pattern extraction engine. Tokenizes incoming task strings into structured 
+    target validation sets across model names, distinct block maps, and structural lots.
+    """
     project_match = re.search(r'(D\d{5,6})', task_name)
     if not project_match:
         return None, set(), set(), set()
@@ -190,9 +215,7 @@ def extract_allowed_targets(task_name):
             else:
                 allowed_models.add(base_series)
 
-    # Letter-series range handler: "SD-01 TO 04", "BB 1 TO 8"
-    # Requires a letter series prefix ([A-Z-]{1,4}) so numeric prefixes like 40, 45 are
-    # handled separately below.
+    # Letter-series range configuration pattern mapping
     range_matches = re.findall(r'\b([A-Z-]{1,4})\s*-?\s*(\d+)\s*(?:TO|-)\s*(?:[A-Z-]{1,4}\s*-?\s*)?(\d+)\b', text_no_blocks)
     for series, start_str, end_str in range_matches:
         start, end = int(start_str), int(end_str)
@@ -203,24 +226,16 @@ def extract_allowed_targets(task_name):
             if start_str.startswith('0'):
                 add_model_target(series, str(i))
 
-    # Comprehensive numeric-prefix sequence handler.
-    # Covers all of: ranges ("45-1 to 7"), comma-separated lists ("40-1, 3, 7, 9"),
-    # and mixed sequences ("45-1 to 7, 10 to 12").
-    # All-digit prefixes (40, 45, 36, etc.) are invisible to the letter-series patterns
-    # above, which require [A-Z-]{1,4}. This iterator also emits zero-padded variants
-    # (e.g. both "1" and "01") so a task listing "45-1" matches a schedule row "45-01".
+    # Comprehensive digit-prefix continuous block evaluator
     for pfx_m in re.finditer(r'\b(\d{2,4})-(\d+)', text_no_blocks):
         base      = pfx_m.group(1)
         first_num = pfx_m.group(2)
         numbers   = [first_num]
         pos       = pfx_m.end()
 
-        # Walk forward consuming "TO N" and ", N" continuations that follow
-        # the initial "BASE-N" anchor. Stop at any non-numeric context.
         while pos < len(text_no_blocks):
             to_m = re.match(r'\s+(?:TO|to)\s+(\d+)', text_no_blocks[pos:], re.IGNORECASE)
             if to_m:
-                # Expand the previous number through the range end
                 range_start = int(numbers.pop())
                 range_end   = int(to_m.group(1))
                 for i in range(range_start, range_end + 1):
@@ -234,12 +249,10 @@ def extract_allowed_targets(task_name):
                 pos += csv_m.end()
                 continue
 
-            break  # Reached a non-numeric/non-separator character
+            break  
 
         for num_str in numbers:
             add_model_target(base, num_str)
-            # Always emit a zero-padded (minimum 2-digit) variant so that a task
-            # listing "45-1" correctly matches a schedule row formatted as "45-01".
             if not num_str.startswith('0') and len(num_str) < 2:
                 add_model_target(base, num_str.zfill(2))
 
@@ -258,8 +271,6 @@ def extract_allowed_targets(task_name):
         for suf in suffixes:
             add_model_target(prefix_series, f"{base_num}-{suf}")
 
-    # Parenthetical range: "BB (1 TO 8)" or "BBs (1, to 8)".
-    # The optional comma between the start number and TO handles the comma-space variant.
     p23 = re.search(r'\b([A-Z-]{1,4})\s*\(\s*(\d+)\s*,?\s*(?:TO|-)\s*(\d+)\s*\)', text_no_blocks)
     if p23:
         series = p23.group(1)
@@ -272,8 +283,6 @@ def extract_allowed_targets(task_name):
         for n in p1.group(2).split(','):
             add_model_target(series, n.strip())
 
-    # Catch-all token sweep: adds every alphanumeric token from the task title.
-    # This is intentionally broad; non-model English words are removed below.
     all_tokens = re.findall(r'\b([A-Z0-9-]+)\b', text_no_blocks)
     for token in all_tokens:
         allowed_models.add(token)
@@ -282,17 +291,21 @@ def extract_allowed_targets(task_name):
             allowed_models.add(token[:-1])
             allowed_models.add(token[:-1].replace('-', ''))
 
-    # Remove common English words that the catch-all sweep may have introduced.
-    # Without this, a task title like "...( priority models)" causes "MODEL" to
-    # enter allowed_models and incorrectly match the spreadsheet header row.
+    # Exclude system headers and generic text from matching matrix targets
     _non_model_words = {
         "MODEL", "MODELS", "PRIORITY", "REVIEW", "FIRST", "SECOND", "THIRD",
         "AND", "THE", "FOR", "WITH", "TO", "OR", "OF", "A", "AN", "IN",
         "LOT", "LOTS", "BLOCK", "BLOCKS",
     }
     allowed_models -= _non_model_words
+    
+    # --- FIXED: Restored core return array mapping payload ---
+    return project_code, allowed_models, allowed_blocks, allowed_lots
 
 def parse_elevation_count(elevation_cell):
+    """
+    Parses structural variations to calculate elevation complexity metrics.
+    """
     if not elevation_cell or str(elevation_cell).strip() in ["-", ""]:
         return 1
     el_str = str(elevation_cell).strip().upper()
@@ -303,37 +316,10 @@ def parse_elevation_count(elevation_cell):
         return len(el_str)
     return 1
 
-def parse_sq_ft_and_difficulty(sq_ft_val, num_elevations, tiers):
-    """Assigns difficulty brackets mapping to structural threshold logic constraints."""
-    s = str(sq_ft_val).upper().replace(",", "").strip()
-    s_match = re.search(r'([\d/]+)', s)
-    if not s_match:
-        return "0", 1.0
-        
-    val_part = s_match.group(1)
-    if "/" in val_part:
-        parts = [float(x.strip()) for x in val_part.split("/") if x.strip()]
-        sq_ft = max(parts) if parts else 0
-    else:
-        sq_ft = float(val_part)
-        
-    base_difficulty = 1.0
-    for tier in tiers:
-        if tier["min"] <= sq_ft < tier["max"]:
-            base_difficulty = tier["base_difficulty"]
-            break
-        
-    elevation_bonus = max(0, (num_elevations - 1) * 0.1)
-    difficulty = round(base_difficulty + elevation_bonus, 2)
-    
-    sq_ft_str = str(sq_ft)
-    if sq_ft_str.endswith(".0"):
-        sq_ft_str = sq_ft_str[:-2]
-        
-    return sq_ft_str, difficulty
-
 def find_date_column_indices(schedule_data):
-    """Scans top rows of the workbook to locate date column offsets."""
+    """
+    Dynamically maps configuration offsets for milestones across structural schedules.
+    """
     arch_idx, floor_idx, truss_idx = None, None, None
     for row in schedule_data[:5]:
         row_upper = [str(cell).upper().strip() for cell in row]
@@ -349,6 +335,9 @@ def find_date_column_indices(schedule_data):
     return arch_idx, floor_idx, truss_idx
 
 def clean_and_parse_date(date_str):
+    """
+    Parses varying date format strings into standardized ISO objects.
+    """
     if not date_str or date_str.strip() in ["", "NAN", "-", "NONE"]:
         return None
     date_clean = date_str.split(" ")[0].strip().replace("/", "-")
@@ -367,7 +356,6 @@ def main():
     
     try:
         difficulty_tiers = load_difficulty_tiers(client, DIFFICULTY_LOOKUP_URL)
-        
         drive_files = list_spreadsheets_in_folder(DRIVE_FOLDER_ID, drive_service)
         master_workbook = client.open_by_url(GOOGLE_SHEET_URL)
         log_sheet = master_workbook.sheet1  
@@ -411,6 +399,7 @@ def main():
                 wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
                 ws = wb.worksheets[0]
                 
+                # Normalize workbook alignment maps across block configurations
                 for merged_range in list(ws.merged_cells.ranges):
                     min_row, max_row = merged_range.min_row, merged_range.max_row
                     min_col, max_col = merged_range.min_col, merged_range.max_col
@@ -427,23 +416,16 @@ def main():
                 
                 arch_idx, floor_idx, truss_idx = find_date_column_indices(schedule_data)
                 subtask_compiled_matches = []
-                current_series = ""
                 
                 for s_row_idx, s_row in enumerate(schedule_data):
                     if len(s_row) < 5:
                         continue
-
-                    # Row index 1 (0-based) is always the column header row in every
-                    # schedule file (Series | Model | Elevation | Square Footage ...).
-                    # Skip it so the word "Model" is never treated as a real model name.
                     if s_row_idx == 1:
                         continue
 
                     series_cell = s_row[1].strip()
                     model_cell = s_row[2].strip().replace(".0", "")
 
-                    # Guard against any other header-like rows that contain known
-                    # column title keywords in the model cell position.
                     if model_cell.upper() in ("MODEL", "MODEL NAME", "SERIES", "DESCRIPTION"):
                         continue
                         
@@ -618,9 +600,6 @@ def main():
                         clickup_start_dt = clean_and_parse_date(p_update.get("clickup_start_date", ""))
                         clickup_due_dt   = clean_and_parse_date(p_update.get("clickup_due_date", ""))
 
-                        # Scan for existing rows that share this model name and update
-                        # their KPI when the value has changed. Only unpack entries that
-                        # are confirmed 2-tuples to guard against corrupt index entries.
                         for (nm, dt), index_val in list(existing_index.items()):
                             if not isinstance(index_val, tuple) or len(index_val) < 2:
                                 continue
