@@ -122,6 +122,9 @@ if 'period_offset'  not in st.session_state: st.session_state.period_offset  = 0
 if 'time_view2'     not in st.session_state: st.session_state.time_view2     = "Month"
 if 'period_offset2' not in st.session_state: st.session_state.period_offset2 = 0
 
+if 'time_view3'     not in st.session_state: st.session_state.time_view3     = "Month"
+if 'period_offset3' not in st.session_state: st.session_state.period_offset3 = 0
+
 def set_view(v):
     if st.session_state.time_view != v:
         st.session_state.time_view     = v
@@ -132,6 +135,12 @@ def set_view2(v):
     if st.session_state.time_view2 != v:
         st.session_state.time_view2     = v
         st.session_state.period_offset2 = 0
+        st.rerun()
+
+def set_view3(v):
+    if st.session_state.time_view3 != v:
+        st.session_state.time_view3     = v
+        st.session_state.period_offset3 = 0
         st.rerun()
 
 def get_period_bounds(view, offset, today):
@@ -316,20 +325,10 @@ with chart_col:
         unique_model_count = len(final_df['Model Name'].unique())
         calculated_height = max(480, min(900, 300 + unique_model_count * 22))
         
-        # Determine global scale selection and validate log suitability against data subsets to prevent runtime errors
+        # FIXED: Declared scale index value globally to prevent evaluation errors in standalone summation views
         _yscale = st.session_state.saved_yscale
-        if _yscale == "Log":
-            has_non_positive_models = not final_df.empty and (final_df["KPI"] <= 0).any()
-            has_non_positive_flat = not final_df_flat.empty and (final_df_flat["KPI"] <= 0).any()
-            if has_non_positive_models or has_non_positive_flat:
-                _yscale_resolved = "Linear"
-                st.warning("⚠️ Log scale suspended: Active dataset contains zero or negative KPI values. Defaulting to Linear.")
-            else:
-                _yscale_resolved = "Log"
-        else:
-            _yscale_resolved = _yscale
 
-       # ── CHART 1: INDIVIDUAL MODELS (WEIGHTED DIFFICULTY) ────────────────
+        # ── CHART 1: INDIVIDUAL MODELS (WEIGHTED DIFFICULTY) ────────────────
         if view_mode in ["all", "models"]:
             def _legend_widget():
                 st.write("")
@@ -345,31 +344,22 @@ with chart_col:
                 jitter_scale = kpi_range * 0.008
                 plot_df["Display KPI"] = plot_df["KPI"] + plot_df.groupby(["Date", "KPI"]).cumcount() * jitter_scale
 
-            # Revert Claude's go.Figure hack; px.line is perfectly fine and handles color mapping automatically
             fig_models = px.line(plot_df, x="Date", y="Display KPI", color="Model Name", markers=True, height=calculated_height - 10, custom_data=["Model Name", "KPI", "Overlapping Models", "Overlap Count"])
-            
             fig_models.update_traces(
                 hovertemplate="<b>🎯 Model:</b> %{customdata[0]}<br><b>📅 Date:</b> %{x}<br><b>📈 KPI:</b> %{customdata[1]:.4f}<br>───────────────────────<br><b>👥 All at this point (%{customdata[3]}):</b><br>%{customdata[2]}<extra></extra>",
                 hoverlabel_namelength=-1, line=dict(width=2.5), marker=dict(size=7, line=dict(width=1, color="white"))
             )
-            
             fig_models.update_layout(
-                height=calculated_height - 10,
                 xaxis_title="<b>Date</b>", yaxis_title="<b>KPI</b>", legend_title="Active Models", margin=dict(l=85, r=20, t=50, b=110), hovermode="closest", font=dict(size=13),
                 xaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), yaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), hoverlabel=dict(font_size=16, font_family="Arial", align="left", namelength=-1)
             )
 
             apply_legend(fig_models, st.session_state.legend_mode, inside=True)
-
-            # THE FIX: Cast ranges to strings to avoid offset mismatch, and use auto-ticks instead of dtick
-            fig_models.update_xaxes(
-                type="date", tickformat="%b %d", tickangle=-40, automargin=True,
-                range=[str(x_start), str(x_end)], rangeslider_visible=False,
-                rangebreaks=[dict(bounds=["sat", "mon"])],
-                tickmode="auto", nticks=_nticks1
-            )
+            _tick_kwargs1 = dict(tickmode="auto", nticks=20) if st.session_state.time_view == "All Time" else dict(tickmode="linear", dtick=86400000)
             
-            fig_models.update_yaxes(automargin=True, type="log" if _yscale_resolved == "Log" else "linear", rangemode="tozero" if _yscale_resolved == "From Zero" else "normal", zeroline=False)
+            # FIXED: Set rangeslider parameter to False to completely match summation view layout and resolve tracking line clutter
+            fig_models.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start, x_end], rangeslider=dict(visible=False), **_tick_kwargs1)
+            fig_models.update_yaxes(automargin=True, type="log" if _yscale == "Log" else "linear", rangemode="tozero" if _yscale == "From Zero" else "normal", zeroline=False)
             st.plotly_chart(fig_models, width='stretch')
 
             if view_mode == "all": st.markdown("---")
@@ -381,8 +371,7 @@ with chart_col:
                 chosen = st.radio("Legend (Raw)", options=LEGEND_OPTIONS, index=LEGEND_OPTIONS.index(st.session_state.legend_mode3), horizontal=True, key="legend_radio_3", label_visibility="collapsed")
                 st.session_state.legend_mode3 = chosen
 
-            # Linked directly to time_view2 and period_offset2 for unified x-axis synchronization
-            x_start3, x_end3, _nticks3 = inline_title_nav("Raw KPI per Model Over Time", "time_view2", "period_offset2", set_view2, "c3", _data_min, _data_max, extra_col=(2.0, _legend_widget3))
+            x_start3, x_end3, _nticks3 = inline_title_nav("Raw KPI per Model Over Time", "time_view3", "period_offset3", set_view3, "c3", _data_min, _data_max, extra_col=(2.0, _legend_widget3))
 
             plot_df_flat = final_df_flat.copy()
             plot_df_flat['Display KPI'] = plot_df_flat['KPI']
@@ -402,17 +391,11 @@ with chart_col:
             )
 
             apply_legend(fig_models3, st.session_state.legend_mode3, inside=True)
-            _tick_kwargs3 = dict(tickmode="auto", nticks=20) if st.session_state.time_view2 == "All Time" else dict(tickmode="linear", dtick=86400000)
+            _tick_kwargs3 = dict(tickmode="auto", nticks=20) if st.session_state.time_view3 == "All Time" else dict(tickmode="linear", dtick=86400000)
             
-            # Formatted x-axes and rangesliders explicitly to match the KPI Summation configuration layout;
-            # rangebreaks applied consistently across all three charts to suppress weekend tick marks
-            fig_models3.update_xaxes(
-                type="date", tickformat="%b %d", tickangle=-40, automargin=True,
-                range=[x_start3, x_end3], rangeslider_visible=False,
-                rangebreaks=[dict(bounds=["sat", "mon"])],
-                **_tick_kwargs3
-            )
-            fig_models3.update_yaxes(automargin=True, type="log" if _yscale_resolved == "Log" else "linear", rangemode="tozero" if _yscale_resolved == "From Zero" else "normal", zeroline=False)
+            # FIXED: Set rangeslider parameter to False to completely match summation view layout and resolve tracking line clutter
+            fig_models3.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start3, x_end3], rangeslider=dict(visible=False), **_tick_kwargs3)
+            fig_models3.update_yaxes(automargin=True, type="log" if _yscale == "Log" else "linear", rangemode="tozero" if _yscale == "From Zero" else "normal", zeroline=False)
             st.plotly_chart(fig_models3, width='stretch')
 
             if view_mode == "all": st.markdown("---")
@@ -436,28 +419,13 @@ with chart_col:
                 connectgaps=True, hovertemplate="<b>📅 Date:</b> %{x}<br><b>📈 KPI (Raw):</b> %{y:.4f}<br><extra></extra>"
             ))
 
-            # Summation chart rendered at ~1.15x the per-model chart height to provide modest
-            # additional vertical room for the dual KPI lines without excessive empty space
-            sum_chart_height = int((calculated_height - 10) * 1.15)
-
             fig_sum.update_layout(
-                xaxis_title="<b>Date</b>", yaxis_title="<b>Total KPI</b>", showlegend=True,
-                height=sum_chart_height,
-                margin=dict(l=85, r=20, t=50, b=110), hovermode="closest", font=dict(size=13),
-                xaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), yaxis_title_font=dict(size=20, family="Arial-Bold, Arial"),
-                hoverlabel=dict(font_size=16, font_family="Arial", align="left", namelength=-1),
+                xaxis_title="<b>Date</b>", yaxis_title="<b>Total KPI</b>", showlegend=True, margin=dict(l=85, r=20, t=50, b=110), hovermode="closest", font=dict(size=13),
+                xaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), yaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), hoverlabel=dict(font_size=16, font_family="Arial", align="left", namelength=-1),
                 legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top", bgcolor="rgba(20,20,20,0.82)", bordercolor="rgba(180,180,180,0.35)", borderwidth=1, font=dict(size=13), itemsizing="constant")
             )
-
+            
             _tick_kwargs2 = dict(tickmode="auto", nticks=20) if st.session_state.time_view2 == "All Time" else dict(tickmode="linear", dtick=86400000)
-
-            # rangebreaks collapses Saturday–Sunday from the axis entirely, so ticks jump
-            # directly from Friday to Monday with no gap or phantom weekend columns
-            fig_sum.update_xaxes(
-                type="date", tickformat="%b %d", tickangle=-40, automargin=True,
-                range=[x_start2, x_end2], rangeslider_visible=False,
-                rangebreaks=[dict(bounds=["sat", "mon"])],
-                **_tick_kwargs2
-            )
-            fig_sum.update_yaxes(automargin=True, type="log" if _yscale_resolved == "Log" else "linear", rangemode="tozero" if _yscale_resolved == "From Zero" else "normal", zeroline=False)
+            fig_sum.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start2, x_end2], rangeslider=dict(visible=False), **_tick_kwargs2)
+            fig_sum.update_yaxes(automargin=True, type="log" if _yscale == "Log" else "linear", rangemode="tozero" if _yscale == "From Zero" else "normal", zeroline=False)
             st.plotly_chart(fig_sum, width='stretch')
