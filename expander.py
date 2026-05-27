@@ -225,11 +225,21 @@ def extract_allowed_targets(task_name):
         for suf in suffixes:
             add_model_target(prefix_series, f"{base_num}-{suf}")
 
-    p23 = re.search(r'\b([A-Z-]{1,4})\s*\(\s*(\d+)\s*(?:TO|-)\s*(\d+)\s*\)', text_no_blocks)
+    # Handle letter-series parenthetical ranges: "BB (1 TO 8)" or "BBs (1, to 8)"
+    # The optional comma handles cases like "(1, to 8)" which broke the original regex.
+    p23 = re.search(r'\b([A-Z-]{1,4})\s*\(\s*(\d+)\s*,?\s*(?:TO|-)\s*(\d+)\s*\)', text_no_blocks)
     if p23:
         series = p23.group(1)
         for i in range(int(p23.group(2)), int(p23.group(3)) + 1):
             add_model_target(series, str(i))
+
+    # Handle numeric-prefix comma-separated lists: "40-1, 3, 7, 9" → 40-1, 40-3, 40-7, 40-9
+    # and "45-8, 9, 13" → 45-8, 45-9, 45-13. These have an all-digit series prefix so
+    # the letter-series patterns above never fire for them.
+    numeric_prefix_csv = re.findall(r'\b(\d{2,4})-(\d+(?:\s*,\s*\d+)+)', text_no_blocks)
+    for base, nums_str in numeric_prefix_csv:
+        for num in re.findall(r'\d+', nums_str):
+            add_model_target(base, num)
 
     p1 = re.search(r'\b([A-Z-]{1,4})\s*(\d+(?:\s*,\s*\d+)+)', text_no_blocks)
     if p1:
@@ -384,11 +394,23 @@ def main():
                 subtask_compiled_matches = []
                 current_series = ""
                 
-                for s_row in schedule_data:
+                for s_row_idx, s_row in enumerate(schedule_data):
                     if len(s_row) < 5:
                         continue
+
+                    # Row index 1 (0-based) is always the column header row in every
+                    # schedule file (Series | Model | Elevation | Square Footage ...).
+                    # Skip it so the word "Model" is never treated as a real model name.
+                    if s_row_idx == 1:
+                        continue
+
                     series_cell = s_row[1].strip()
                     model_cell = s_row[2].strip().replace(".0", "")
+
+                    # Guard against any other header-like rows that contain known
+                    # column title keywords in the model cell position.
+                    if model_cell.upper() in ("MODEL", "MODEL NAME", "SERIES", "DESCRIPTION"):
+                        continue
                         
                     if series_cell:
                         current_series = series_cell
