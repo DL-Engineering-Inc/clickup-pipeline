@@ -18,10 +18,9 @@ st.markdown("""
     div[data-testid="stToolbar"] {visibility: hidden;}
     /* Tighten up radio button row spacing */
     div[data-testid="stHorizontalBlock"] > div { gap: 0.25rem; }
-    /* Small top gap — just enough so the Plotly toolbar isn't clipped by the
-       iframe edge. The t=50 figure margin reserves space above the plot area. */
+    /* Small top gap — ensures the Plotly toolbar isn't clipped by the iframe edge */
     div[data-testid="stPlotlyChart"] { margin-top: 0.25rem; }
-    /* Keep period nav buttons compact and visually tight */
+    /* Keep period navigation buttons compact and visually tight */
     div[data-testid="stButton"] > button { padding: 0.2rem 0.7rem; }
     </style>
 """, unsafe_allow_html=True)
@@ -51,6 +50,9 @@ if not st.session_state["authenticated"]:
 # --- 3. DATA FETCHING & CACHING ---
 @st.cache_data(ttl=600)
 def load_data():
+    """
+    Downloads, normalizes, and structures model KPI datasets from Sheets 2 and 3 concurrently.
+    """
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     if os.path.exists("creds.json"):
         creds = Credentials.from_service_account_file("creds.json", scopes=scopes)
@@ -62,7 +64,7 @@ def load_data():
     client = gspread.authorize(creds)
     SHEET_URL = "https://docs.google.com/spreadsheets/d/1RE039NcnPeQtQrvI5zjLyADzAr-ZseBPUq388SxkV-Y/edit"
     
-    # Load sheet 2 (Weighted Difficulty KPI)
+    # Extract Tab 2 (Weighted Difficulty KPI Framework)
     sheet2 = client.open_by_url(SHEET_URL).worksheets()[1]
     raw_data2 = sheet2.get_all_values()
     df2 = pd.DataFrame(raw_data2[1:], columns=raw_data2[0])
@@ -77,7 +79,7 @@ def load_data():
     df2['Overlap Count'] = df2.groupby(['Date', 'KPI'])['Model Name'].transform('nunique')
     df2 = df2.sort_values(by=['Model Name', 'Date'])
 
-    # Load sheet 3 (Flat Raw KPI)
+    # Extract Tab 3 (Flat Unweighted 1/Duration KPI Framework)
     sheet3 = client.open_by_url(SHEET_URL).worksheets()[2]
     raw_data3 = sheet3.get_all_values()
     df3 = pd.DataFrame(raw_data3[1:], columns=raw_data3[0])
@@ -102,6 +104,7 @@ if "sidebar_is_open" not in st.session_state:
     st.session_state["sidebar_is_open"] = False
 
 def save_settings():
+    """Flushes filter selections to state layers upon modification."""
     if 'ui_jitter'   in st.session_state: st.session_state.saved_jitter   = st.session_state.ui_jitter
     if 'ui_yscale'   in st.session_state: st.session_state.saved_yscale   = st.session_state.ui_yscale
     if 'ui_projects' in st.session_state: st.session_state.saved_projects = st.session_state.ui_projects
@@ -112,7 +115,7 @@ if 'saved_projects' not in st.session_state: st.session_state.saved_projects = [
 if 'saved_models'   not in st.session_state: st.session_state.saved_models   = []
 if 'saved_yscale'   not in st.session_state: st.session_state.saved_yscale   = "Linear"
 
-# Period navigation states
+# Time interval tracking parameters across views
 if 'time_view'      not in st.session_state: st.session_state.time_view      = "Month"
 if 'period_offset'  not in st.session_state: st.session_state.period_offset  = 0
 
@@ -122,7 +125,6 @@ if 'period_offset2' not in st.session_state: st.session_state.period_offset2 = 0
 if 'time_view3'     not in st.session_state: st.session_state.time_view3     = "Month"
 if 'period_offset3' not in st.session_state: st.session_state.period_offset3 = 0
 
-# Navigation setter functions
 def set_view(v):
     if st.session_state.time_view != v:
         st.session_state.time_view     = v
@@ -142,6 +144,7 @@ def set_view3(v):
         st.rerun()
 
 def get_period_bounds(view, offset, today):
+    """Calculates chronological tracking limits based on frame configuration state."""
     td = datetime.timedelta
     if view == "Week":
         monday = today - td(days=today.weekday())
@@ -179,16 +182,6 @@ if 'legend_mode' not in st.session_state:
 if 'legend_mode3' not in st.session_state:
     st.session_state.legend_mode3 = "🚫 Hidden"
 
-# --- Sidebar Controls ---
-if not st.session_state["sidebar_is_open"]:
-    if st.button("📂 Open Settings"):
-        st.session_state["sidebar_is_open"] = True
-        st.rerun()
-else:
-    if st.button("📁 Close Settings"):
-        st.session_state["sidebar_is_open"] = False
-        st.rerun()
-
 # --- 5. LAYOUT & FILTERS ---
 if st.session_state["sidebar_is_open"]:
     settings_col, chart_col = st.columns([1, 4], gap="large")
@@ -201,7 +194,6 @@ if st.session_state["sidebar_is_open"]:
             index=["Linear", "Log", "From Zero"].index(st.session_state.saved_yscale if st.session_state.saved_yscale in ["Linear", "Log", "From Zero"] else "Linear"),
             key="ui_yscale",
             on_change=save_settings,
-            help="Linear: fits to data range. Log: spreads clustered lines. From Zero: anchors axis at 0.",
         )
         st.markdown("---")
         st.subheader("🔍 Filters")
@@ -222,7 +214,6 @@ filtered_df_flat = df_flat if not st.session_state.saved_projects else df_flat[d
 final_df_flat    = filtered_df_flat if not st.session_state.saved_models else filtered_df_flat[filtered_df_flat['Model Name'].isin(st.session_state.saved_models)]
 final_df_flat    = final_df_flat[pd.to_datetime(final_df_flat['Date']).dt.dayofweek < 5].copy()
 
-# --- 6b. PERIOD NAVIGATION BOUNDS ---
 _data_min = pd.to_datetime(final_df['Date']).min().date() if not final_df.empty else today
 _data_max = pd.to_datetime(final_df['Date']).max().date() if not final_df.empty else today
 
@@ -333,6 +324,9 @@ with chart_col:
     else:
         unique_model_count = len(final_df['Model Name'].unique())
         calculated_height = max(480, min(900, 300 + unique_model_count * 22))
+        
+        # FIXED: Declared scale index value globally to prevent evaluation errors in standalone summation views
+        _yscale = st.session_state.saved_yscale
 
         # ── CHART 1: INDIVIDUAL MODELS (WEIGHTED DIFFICULTY) ────────────────
         if view_mode in ["all", "models"]:
@@ -362,9 +356,9 @@ with chart_col:
 
             apply_legend(fig_models, st.session_state.legend_mode, inside=True)
             _tick_kwargs1 = dict(tickmode="auto", nticks=20) if st.session_state.time_view == "All Time" else dict(tickmode="linear", dtick=86400000)
-            fig_models.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start, x_end], rangeslider=dict(visible=True, thickness=0.04, yaxis=dict(rangemode="match")), **_tick_kwargs1)
             
-            _yscale = st.session_state.saved_yscale
+            # FIXED: Set rangeslider parameter to False to completely match summation view layout and resolve tracking line clutter
+            fig_models.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start, x_end], rangeslider=dict(visible=False), **_tick_kwargs1)
             fig_models.update_yaxes(automargin=True, type="log" if _yscale == "Log" else "linear", rangemode="tozero" if _yscale == "From Zero" else "normal", zeroline=False)
             st.plotly_chart(fig_models, width='stretch')
 
@@ -398,8 +392,9 @@ with chart_col:
 
             apply_legend(fig_models3, st.session_state.legend_mode3, inside=True)
             _tick_kwargs3 = dict(tickmode="auto", nticks=20) if st.session_state.time_view3 == "All Time" else dict(tickmode="linear", dtick=86400000)
-            fig_models3.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start3, x_end3], rangeslider=dict(visible=True, thickness=0.04, yaxis=dict(rangemode="match")), **_tick_kwargs3)
             
+            # FIXED: Set rangeslider parameter to False to completely match summation view layout and resolve tracking line clutter
+            fig_models3.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start3, x_end3], rangeslider=dict(visible=False), **_tick_kwargs3)
             fig_models3.update_yaxes(automargin=True, type="log" if _yscale == "Log" else "linear", rangemode="tozero" if _yscale == "From Zero" else "normal", zeroline=False)
             st.plotly_chart(fig_models3, width='stretch')
 
@@ -432,6 +427,5 @@ with chart_col:
             
             _tick_kwargs2 = dict(tickmode="auto", nticks=20) if st.session_state.time_view2 == "All Time" else dict(tickmode="linear", dtick=86400000)
             fig_sum.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start2, x_end2], rangeslider=dict(visible=False), **_tick_kwargs2)
-            
             fig_sum.update_yaxes(automargin=True, type="log" if _yscale == "Log" else "linear", rangemode="tozero" if _yscale == "From Zero" else "normal", zeroline=False)
             st.plotly_chart(fig_sum, width='stretch')
