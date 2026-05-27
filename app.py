@@ -356,9 +356,9 @@ with chart_col:
             )
 
             apply_legend(fig_models, st.session_state.legend_mode, inside=True)
+            _tick_kwargs1 = dict(tickmode="auto", nticks=20) if st.session_state.time_view == "All Time" else dict(tickmode="linear", dtick=86400000)
             
-            # Switched to tickmode="auto" to completely resolve the missing data plotting bugs on rangebreaks
-            fig_models.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start, x_end], rangeslider_visible=False, rangebreaks=[dict(bounds=["sat", "mon"])], tickmode="auto", nticks=20)
+            fig_models.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start, x_end], rangeslider_visible=False, **_tick_kwargs1)
             fig_models.update_yaxes(automargin=True, type="log" if _yscale_resolved == "Log" else "linear", rangemode="tozero" if _yscale_resolved == "From Zero" else "normal", zeroline=False)
             st.plotly_chart(fig_models, width='stretch')
 
@@ -371,6 +371,7 @@ with chart_col:
                 chosen = st.radio("Legend (Raw)", options=LEGEND_OPTIONS, index=LEGEND_OPTIONS.index(st.session_state.legend_mode3), horizontal=True, key="legend_radio_3", label_visibility="collapsed")
                 st.session_state.legend_mode3 = chosen
 
+            # Linked directly to time_view2 and period_offset2 for unified x-axis synchronization
             x_start3, x_end3, _nticks3 = inline_title_nav("Raw KPI per Model Over Time", "time_view2", "period_offset2", set_view2, "c3", _data_min, _data_max, extra_col=(2.0, _legend_widget3))
 
             plot_df_flat = final_df_flat.copy()
@@ -391,9 +392,10 @@ with chart_col:
             )
 
             apply_legend(fig_models3, st.session_state.legend_mode3, inside=True)
+            _tick_kwargs3 = dict(tickmode="auto", nticks=20) if st.session_state.time_view2 == "All Time" else dict(tickmode="linear", dtick=86400000)
             
-            # Switched to tickmode="auto" to completely resolve the missing data plotting bugs on rangebreaks
-            fig_models3.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start3, x_end3], rangeslider_visible=False, rangebreaks=[dict(bounds=["sat", "mon"])], tickmode="auto", nticks=20)
+            # Formatted x-axes and rangesliders explicitly to match the KPI Summation configuration layout
+            fig_models3.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start3, x_end3], rangeslider_visible=False, **_tick_kwargs3)
             fig_models3.update_yaxes(automargin=True, type="log" if _yscale_resolved == "Log" else "linear", rangemode="tozero" if _yscale_resolved == "From Zero" else "normal", zeroline=False)
             st.plotly_chart(fig_models3, width='stretch')
 
@@ -418,14 +420,28 @@ with chart_col:
                 connectgaps=True, hovertemplate="<b>📅 Date:</b> %{x}<br><b>📈 KPI (Raw):</b> %{y:.4f}<br><extra></extra>"
             ))
 
-            # Adjusted layout height to match the baseline standard grid structure perfectly
+            # Summation chart rendered at ~2.3x the per-model chart height to reduce vertical whitespace
+            # and give the dual KPI lines adequate breathing room within the embed viewport
+            sum_chart_height = int((calculated_height - 10) * 2.3)
+
             fig_sum.update_layout(
-                height=calculated_height,
-                xaxis_title="<b>Date</b>", yaxis_title="<b>Total KPI</b>", showlegend=True, margin=dict(l=85, r=20, t=50, b=110), hovermode="closest", font=dict(size=13),
-                xaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), yaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), hoverlabel=dict(font_size=16, font_family="Arial", align="left", namelength=-1),
+                xaxis_title="<b>Date</b>", yaxis_title="<b>Total KPI</b>", showlegend=True,
+                height=sum_chart_height,
+                margin=dict(l=85, r=20, t=50, b=110), hovermode="closest", font=dict(size=13),
+                xaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), yaxis_title_font=dict(size=20, family="Arial-Bold, Arial"),
+                hoverlabel=dict(font_size=16, font_family="Arial", align="left", namelength=-1),
                 legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top", bgcolor="rgba(20,20,20,0.82)", bordercolor="rgba(180,180,180,0.35)", borderwidth=1, font=dict(size=13), itemsizing="constant")
             )
-            
-            fig_sum.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start2, x_end2], rangeslider_visible=False, rangebreaks=[dict(bounds=["sat", "mon"])], tickmode="auto", nticks=20)
+
+            _tick_kwargs2 = dict(tickmode="auto", nticks=20) if st.session_state.time_view2 == "All Time" else dict(tickmode="linear", dtick=86400000)
+
+            # rangebreaks collapses Saturday–Sunday from the axis entirely, so ticks jump
+            # directly from Friday to Monday with no gap or phantom weekend columns
+            fig_sum.update_xaxes(
+                type="date", tickformat="%b %d", tickangle=-40, automargin=True,
+                range=[x_start2, x_end2], rangeslider_visible=False,
+                rangebreaks=[dict(bounds=["sat", "mon"])],
+                **_tick_kwargs2
+            )
             fig_sum.update_yaxes(automargin=True, type="log" if _yscale_resolved == "Log" else "linear", rangemode="tozero" if _yscale_resolved == "From Zero" else "normal", zeroline=False)
             st.plotly_chart(fig_sum, width='stretch')
