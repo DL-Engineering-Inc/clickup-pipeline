@@ -30,7 +30,8 @@ def get_google_credentials():
 
 def execute_with_retry(func, *args, **kwargs):
     """
-    Executes a Google API method using exponential backoff to handle rate limits (HTTP 429).
+    Executes a Google API method using exponential backoff to mitigate 
+    rate limit containment rules (HTTP 429).
     """
     max_retries = 5
     base_delay = 5
@@ -299,7 +300,6 @@ def extract_allowed_targets(task_name):
     }
     allowed_models -= _non_model_words
     
-    # --- FIXED: Restored core return array mapping payload ---
     return project_code, allowed_models, allowed_blocks, allowed_lots
 
 def parse_elevation_count(elevation_cell):
@@ -315,6 +315,39 @@ def parse_elevation_count(elevation_cell):
     if el_str.isalpha():
         return len(el_str)
     return 1
+
+# --- RESTORED: Dynamic Matrix Bracket Mapping Routine ---
+def parse_sq_ft_and_difficulty(sq_ft_val, num_elevations, tiers):
+    """
+    Maps the square footage value to the dynamically loaded difficulty tiers
+    and computes the total difficulty calculation factoring in elevation bonuses.
+    """
+    s = str(sq_ft_val).upper().replace(",", "").strip()
+    s_match = re.search(r'([\d/]+)', s)
+    if not s_match:
+        return "0", 1.0
+        
+    val_part = s_match.group(1)
+    if "/" in val_part:
+        parts = [float(x.strip()) for x in val_part.split("/") if x.strip()]
+        sq_ft = max(parts) if parts else 0
+    else:
+        sq_ft = float(val_part)
+        
+    base_difficulty = 1.0
+    for tier in tiers:
+        if tier["min"] <= sq_ft < tier["max"]:
+            base_difficulty = tier["base_difficulty"]
+            break
+        
+    elevation_bonus = max(0, (num_elevations - 1) * 0.1)
+    difficulty = round(base_difficulty + elevation_bonus, 2)
+    
+    sq_ft_str = str(sq_ft)
+    if sq_ft_str.endswith(".0"):
+        sq_ft_str = sq_ft_str[:-2]
+        
+    return sq_ft_str, difficulty
 
 def find_date_column_indices(schedule_data):
     """
