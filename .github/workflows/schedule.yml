@@ -32,3 +32,6 @@ jobs:
 
       - name: Run Step 2 (Expander)
         run: python expander.py
+
+      - name: Run Step 3 (ClickUp QA)
+        run: python ClickUpQA.py
