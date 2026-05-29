@@ -325,7 +325,6 @@ with chart_col:
         unique_model_count = len(final_df['Model Name'].unique())
         calculated_height = max(480, min(900, 300 + unique_model_count * 22))
         
-        # FIXED: Declared scale index value globally to prevent evaluation errors in standalone summation views
         _yscale = st.session_state.saved_yscale
 
         # ── CHART 1: INDIVIDUAL MODELS (WEIGHTED DIFFICULTY) ────────────────
@@ -357,7 +356,6 @@ with chart_col:
             apply_legend(fig_models, st.session_state.legend_mode, inside=True)
             _tick_kwargs1 = dict(tickmode="auto", nticks=20) if st.session_state.time_view == "All Time" else dict(tickmode="linear", dtick=86400000)
             
-            # FIXED: Set rangeslider parameter to False to completely match summation view layout and resolve tracking line clutter
             fig_models.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start, x_end], rangeslider=dict(visible=False), **_tick_kwargs1)
             fig_models.update_yaxes(automargin=True, type="log" if _yscale == "Log" else "linear", rangemode="tozero" if _yscale == "From Zero" else "normal", zeroline=False)
             st.plotly_chart(fig_models, width='stretch')
@@ -393,7 +391,6 @@ with chart_col:
             apply_legend(fig_models3, st.session_state.legend_mode3, inside=True)
             _tick_kwargs3 = dict(tickmode="auto", nticks=20) if st.session_state.time_view3 == "All Time" else dict(tickmode="linear", dtick=86400000)
             
-            # FIXED: Set rangeslider parameter to False to completely match summation view layout and resolve tracking line clutter
             fig_models3.update_xaxes(type="date", tickformat="%b %d", tickangle=-40, automargin=True, range=[x_start3, x_end3], rangeslider=dict(visible=False), **_tick_kwargs3)
             fig_models3.update_yaxes(automargin=True, type="log" if _yscale == "Log" else "linear", rangemode="tozero" if _yscale == "From Zero" else "normal", zeroline=False)
             st.plotly_chart(fig_models3, width='stretch')
@@ -419,10 +416,12 @@ with chart_col:
                 connectgaps=True, hovertemplate="<b>📅 Date:</b> %{x}<br><b>📈 KPI (Raw):</b> %{y:.4f}<br><extra></extra>"
             ))
 
+            # FIXED: Added dynamic height parameter scaled at 1.15x calculated layout boundaries to perfectly fill viewport space
             fig_sum.update_layout(
                 xaxis_title="<b>Date</b>", yaxis_title="<b>Total KPI</b>", showlegend=True, margin=dict(l=85, r=20, t=50, b=110), hovermode="closest", font=dict(size=13),
                 xaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), yaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), hoverlabel=dict(font_size=16, font_family="Arial", align="left", namelength=-1),
-                legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top", bgcolor="rgba(20,20,20,0.82)", bordercolor="rgba(180,180,180,0.35)", borderwidth=1, font=dict(size=13), itemsizing="constant")
+                legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top", bgcolor="rgba(20,20,20,0.82)", bordercolor="rgba(180,180,180,0.35)", borderwidth=1, font=dict(size=13), itemsizing="constant"),
+                height=int(calculated_height * 1.15)
             )
             
             _tick_kwargs2 = dict(tickmode="auto", nticks=20) if st.session_state.time_view2 == "All Time" else dict(tickmode="linear", dtick=86400000)
