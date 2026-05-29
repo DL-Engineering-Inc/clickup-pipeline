@@ -1,3 +1,25 @@
+"""
+snapshotter.py — ClickUp-to-Google Sheets Status Synchronization Engine
+
+Performs a deterministic, idempotent synchronization of active ClickUp task records
+against a Google Sheets master log.  On each run the pipeline:
+
+  1. Streams all tasks and subtasks from the configured ClickUp list via the v2 REST
+     API, applying a three-condition filter (native status, custom progression field,
+     project naming convention) to isolate tasks in the First Markup / Timeline stage.
+  2. Opens the target Google Sheet and maps its row structure into an in-memory block
+     index keyed by immutable ClickUp task ID (column N).
+  3. Executes a three-way reconciliation pass:
+       UPDATE — overwrites date, duration, and task-ID cells for matched rows.
+       INSERT — appends rows for tasks not yet present in the sheet.
+       DELETE — removes rows whose tasks no longer satisfy the filter criteria.
+
+Row deletions are processed in descending row-number order to prevent index-shifting
+side effects.  All Google Sheets writes are wrapped in an exponential-backoff retry
+loop to handle API rate limits (HTTP 429) without data loss.
+
+Dependencies: gspread, google-auth, requests, numpy, python-dotenv
+"""
 import os
 import re
 import time
@@ -33,7 +55,25 @@ def get_google_sheet_client():
 
 def execute_with_retry(func, *args, **kwargs):
     """
-    Executes a Google Sheets API method using exponential backoff to handle rate limits (HTTP 429).
+    Executes a Google Sheets API call with exponential backoff to handle write-quota
+    rate limits (HTTP 429).
+
+    Retries up to 8 times with a base delay of 15 seconds, doubling on each attempt
+    plus a randomised jitter to avoid thundering-herd conditions when multiple
+    pipeline runs are scheduled concurrently.  Backoff schedule: 15, 30, 60, 120,
+    240, 480, 960 seconds.  Non-429 exceptions are re-raised immediately.
+
+    Args:
+        func: Callable — the gspread API method to invoke.
+        *args: Positional arguments forwarded to func.
+        **kwargs: Keyword arguments forwarded to func.
+
+    Returns:
+        The return value of func on success.
+
+    Raises:
+        gspread.exceptions.APIError: If the error is not a rate-limit response, or
+            if the maximum retry count is exhausted.
     """
     max_retries = 8
     base_delay = 15
@@ -46,9 +86,9 @@ def execute_with_retry(func, *args, **kwargs):
                 print(f" [!] Write quota limit hit (429). Retrying in {delay:.2f}s... (attempt {attempt + 1}/{max_retries})")
                 time.sleep(delay)
             else:
-                raise e
-        except Exception as e:
-            raise e
+                raise
+        except Exception:
+            raise
 
 def ms_to_eastern_date(ms):
     """Convert a ClickUp UTC-millisecond timestamp to a date in Eastern time."""
@@ -97,8 +137,9 @@ def get_clickup_tasks():
                     print(f" [!] ClickUp Error: Page {page} failed after {max_retries} attempts ({type(e).__name__}).")
                     raise
 
-        # FIXED: Converted 'break' into an explicit RuntimeError. If a connection error or authentication
-        # exception occurs, the execution context terminates immediately, preserving spreadsheet data rows.
+        # Raises RuntimeError rather than silently continuing: an incomplete page stream would allow
+        # the reconciliation phase to delete sheet rows for tasks that were simply never fetched,
+        # resulting in irreversible data loss in the master log.
         if response is None or response.status_code != 200:
             status = response.status_code if response is not None else "no response"
             print(f" [!] ClickUp Error: Failed to fetch tasks on page {page} (Status: {status})")
@@ -126,16 +167,26 @@ def get_clickup_tasks():
     return all_tasks
 
 def main():
+    """
+    Entry point for the status synchronization pipeline.
+
+    Orchestrates the full execution sequence: task streaming, filter evaluation,
+    sheet structure mapping, and the three-phase reconciliation pass
+    (update / insert / delete).  Aborts immediately if required credentials are
+    absent or if the ClickUp API returns an incomplete response, to ensure the
+    master log is never mutated with partial data.
+    """
     print(f"[{datetime.now(tz=EASTERN)}] Initializing Status Synchronization Pipeline...")
 
-    # Pre-flight credential check
+    # Validate required environment variables before initiating any API calls or sheet writes.
     if not CLICKUP_TOKEN:
         print("\n[!] FATAL ERROR: ClickUp Token environment variable is missing.")
         print("    Please run the following command in your terminal before running the script:")
         print('    set CLICKUP_TOKEN="your_actual_token_here"\n')
         return
 
-    # Task streaming session (will crash safely before touching any rows if an issue occurs)
+    # Fetch all qualifying tasks before opening the sheet.  A stream failure raises here,
+    # before any sheet mutations, so the existing log data is never partially overwritten.
     tasks = get_clickup_tasks()
 
     # Keyed by immutable ClickUp Task ID (not by name, which can change mid-project)
@@ -209,15 +260,17 @@ def main():
 
     print(f" -> Found {len(active_first_markup_tasks)} items matching [Status: TIMELINE], [Progression: FIRST MARKUP], and [Naming Code: D######].")
 
-    # 2. Access your Master Log spreadsheet
+    # Open the master log spreadsheet and cache all row data before initiating any sheet mutations.
     print("\n[Connecting to Google Sheets]")
     client = get_google_sheet_client()
     log_sheet = client.open_by_url(GOOGLE_SHEET_URL).sheet1
     all_sheet_rows = execute_with_retry(log_sheet.get_all_values)
     print(f" -> Connection Established. Sheet data cached ({len(all_sheet_rows)} rows).")
 
-    # 3. Structural Block Mapping Pass
-    # Column N (index 13) stores the immutable ClickUp Task ID for each parent row.
+    # Build a block index from the sheet structure.  Each parent row (non-empty column B)
+    # anchors a block; column N (index 13) stores the immutable ClickUp task ID used for
+    # identity resolution.  Child model rows (non-empty column C only) are collected under
+    # their nearest parent block.
     parent_blocks = []
     current_block = None
 
@@ -253,7 +306,8 @@ def main():
     # predate the column N addition and therefore have no stored task ID yet.
     name_to_task_id = {info["name"]: tid for tid, info in active_first_markup_tasks.items()}
 
-    # 4. Synchronized Evaluation & Changes Phase
+    # Reconciliation pass: compare each sheet block against live ClickUp data and apply
+    # the appropriate UPDATE or REMOVE operation to bring the log into sync.
     rows_to_delete = set()
     matched_log_ids = set()
     today_str = datetime.now(tz=EASTERN).strftime("%Y-%m-%d")
@@ -304,7 +358,7 @@ def main():
         print(f"\n[!] FATAL ERROR during sync loop at task '{stored_name}', row {p_row}: {type(e).__name__}: {e}")
         raise
 
-    # 5. Append Phase for Completely New Tasks
+    # Insertion phase: tasks present in ClickUp but not yet in the sheet are queued as new rows.
     fresh_insertions = []
     for task_id, task_info in active_first_markup_tasks.items():
         if task_id not in matched_log_ids:
@@ -322,7 +376,8 @@ def main():
         execute_with_retry(log_sheet.append_rows, fresh_insertions, value_input_option="USER_ENTERED")
         print(" -> Append Operations Successful.")
 
-    # 6. Deletion Execution Sweep (Reverse Processing to prevent shifting errors)
+    # Deletion sweep: process queued row removals in descending row-number order to prevent
+    # earlier deletions from shifting the indices of subsequent targets.
     if rows_to_delete:
         sorted_deletions = sorted(list(rows_to_delete), reverse=True)
         print(f"\nExecuting cleanup sweep (Wiping {len(sorted_deletions)} obsolete rows out)...")

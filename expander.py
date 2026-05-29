@@ -1,3 +1,32 @@
+"""
+expander.py — Multi-Project KPI Synchronization Engine
+
+Reads active parent-task records from a Google Sheets master log, resolves each
+task's associated schedule workbook from Google Drive, and computes two KPI
+allocation metrics per constituent model:
+
+  Weighted KPI  =  difficulty_factor / parent_task_duration_days
+  Flat KPI      =  1 / parent_task_duration_days
+
+Results are upserted into Sheet 2 (weighted difficulty framework) and Sheet 3
+(flat unweighted framework), producing one row per model per business day that
+falls within the parent task's ClickUp start–due date window.
+
+Technical approach:
+  - Difficulty factors are loaded from a remote configuration sheet; hard-coded
+    defaults apply if the remote read fails, ensuring pipeline resilience.
+  - Model-to-row matching uses a multi-strategy regex parser that normalises task
+    names containing alphanumeric series codes, numeric ranges, block/lot
+    designators, and parenthesised range groups into a canonical target set.
+  - Shared project codes across multiple parent tasks are resolved via a pre-scan
+    phase: the later-dated parent claims exclusive ownership of contested model rows.
+  - Sheet 2/3 indices are maintained in memory and updated incrementally to avoid
+    repeated full-sheet reads, which are the primary trigger for Google Sheets API
+    rate-limit errors (HTTP 429).
+
+Dependencies: gspread, google-auth, google-api-python-client, openpyxl, pandas,
+              numpy, python-dotenv
+"""
 import re
 import io
 import time
@@ -30,8 +59,23 @@ def get_google_credentials():
 
 def execute_with_retry(func, *args, **kwargs):
     """
-    Executes a Google API method using exponential backoff to mitigate
-    rate limit containment rules (HTTP 429).
+    Executes a Google Sheets API call with exponential backoff to handle write-quota
+    rate limits (HTTP 429).
+
+    Retries up to 5 times with a base delay of 5 seconds, doubling on each attempt
+    plus a randomised jitter.  Non-429 errors are re-raised immediately.
+
+    Args:
+        func: Callable — the gspread API method to invoke.
+        *args: Positional arguments forwarded to func.
+        **kwargs: Keyword arguments forwarded to func.
+
+    Returns:
+        The return value of func on success.
+
+    Raises:
+        gspread.exceptions.APIError: If the error is not a rate-limit response, or
+            if the maximum retry count is exhausted.
     """
     max_retries = 5
     base_delay = 5
@@ -44,9 +88,9 @@ def execute_with_retry(func, *args, **kwargs):
                 print(f" [!] Rate limit hit (429). Server busy. Sleeping for {delay:.2f}s before retry...")
                 time.sleep(delay)
             else:
-                raise e
-        except Exception as e:
-            raise e
+                raise
+        except Exception:
+            raise
 
 def batch_delete_rows(sheet, row_nums):
     """Deletes multiple rows from a worksheet in a single batchUpdate API request.
@@ -513,6 +557,20 @@ def batch_purge_models_from_sheets(model_names, proj_sheet, flat_sheet):
             batch_delete_rows(sheet, to_delete)
 
 def main():
+    """
+    Entry point for the KPI synchronization pipeline.
+
+    Executes the full processing sequence:
+      1. Loads difficulty tier configuration from the remote lookup sheet.
+      2. Catalogues schedule workbooks available in the Google Drive folder.
+      3. Performs data-integrity passes on Sheets 1, 2, and 3 to remove corrupt
+         or duplicate header rows introduced by previous pipeline runs.
+      4. Runs a pre-scan to resolve model ownership when multiple parent tasks
+         share the same project code, assigning each model row to the parent
+         with the latest ClickUp start date.
+      5. Iterates over all parent-task rows, parses model targets from the task
+         name, and upserts computed KPI values into Sheets 2 and 3.
+    """
     print(f"[{datetime.now()}] Initializing Advanced Inline Upsert Engine...")
     creds = get_google_credentials()
     client = gspread.authorize(creds)
@@ -524,7 +582,9 @@ def main():
         master_workbook = client.open_by_url(GOOGLE_SHEET_URL)
         log_sheet = master_workbook.sheet1  
         
-        # --- AUTOMATED DATA PURGE PROTOCOL (SHEET 1) ---
+        # --- DATA INTEGRITY PASS (SHEET 1) ---
+        # Remove stale header rows (cells whose model column normalises to "MODEL")
+        # that can accumulate when rows are inserted during prior pipeline runs.
         print(" -> Scanning Sheet 1 for legacy header row duplicates...")
         all_log_rows = log_sheet.get_all_values()
         sheet1_purge_indices = []
@@ -539,7 +599,10 @@ def main():
             batch_delete_rows(log_sheet, sheet1_purge_indices)
             all_log_rows = log_sheet.get_all_values()
 
-        # --- AUTOMATED DATA PURGE PROTOCOL (SHEET 2 - WEIGHTED) ---
+        # --- DATA INTEGRITY PASS (SHEET 2 - WEIGHTED) ---
+        # Remove rows whose name column ends with " - MODEL" or equals "MODEL":
+        # artefacts produced when a schedule file contains a header row that was
+        # matched and written to the KPI sheet in error.
         print(" -> Scanning Sheet 2 (Consolidated Log) for corrupt entries...")
         proj_sheet = master_workbook.worksheets()[1]
         proj_rows = proj_sheet.get_all_values()
@@ -555,7 +618,8 @@ def main():
             batch_delete_rows(proj_sheet, sheet2_purge_indices)
             proj_rows = proj_sheet.get_all_values()
 
-        # --- UPDATED: AUTOMATED DATA PURGE PROTOCOL (SHEET 3 - UNWEIGHTED FLAT) ---
+        # --- DATA INTEGRITY PASS (SHEET 3 - UNWEIGHTED FLAT) ---
+        # Mirrors the Sheet 2 integrity pass; applied to the flat (unweighted) KPI tab.
         print(" -> Scanning Sheet 3 (Flat Log) for corrupt entries...")
         flat_sheet = master_workbook.worksheets()[2]
         flat_rows = flat_sheet.get_all_values()
@@ -843,7 +907,8 @@ def main():
                         model_difficulty = float(difficulty_output) if difficulty_output else 0
                         loading_quotient = round(model_difficulty / parent_col_g, 4) if parent_col_g != 0 else ""
 
-                        # UPDATED: Computes unweighted loading metric allocation payload (1 / duration)
+                        # Flat (unweighted) allocation: each model receives an equal share of the parent
+                        # task's duration, independent of its individual difficulty factor.
                         flat_loading_quotient = round(1.0 / parent_col_g, 4) if parent_col_g != 0 else ""
                     except Exception:
                         loading_quotient = ""

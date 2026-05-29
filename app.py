@@ -1,3 +1,28 @@
+"""
+app.py — Model KPI Progress Dashboard (Streamlit)
+
+Provides a password-protected, interactive web dashboard for visualising
+model-level KPI metrics over time.  Data is sourced from two Google Sheets tabs:
+
+  Sheet 2 — Weighted difficulty KPI  (difficulty_factor / duration)
+  Sheet 3 — Flat unweighted KPI      (1 / duration)
+
+Three chart modes are available, selectable via the ?view= query parameter:
+  models      — individual per-model time-series lines, one chart per KPI framework
+  summation   — aggregate KPI sum across all visible models (dual-series overlay)
+  all         — all charts displayed in sequence (default)
+
+Display settings (project/model filters, Y-axis scale, jitter, legend mode) are
+persisted in Streamlit session state so that period-navigation reruns do not reset
+user preferences.  KPI data is cached for 10 minutes (ttl=600) to reduce
+Google Sheets API calls.
+
+Authentication: passwords are checked against a secret stored in st.secrets
+(DASHBOARD_PASSWORD).  A URL query parameter (?pwd=) is also accepted for
+embedded access.
+
+Dependencies: streamlit, gspread, google-auth, pandas, plotly
+"""
 import re
 import os
 import io
@@ -104,7 +129,14 @@ if "sidebar_is_open" not in st.session_state:
     st.session_state["sidebar_is_open"] = False
 
 def save_settings():
-    """Flushes filter selections to state layers upon modification."""
+    """
+    Persists active widget values to durable session-state keys.
+
+    Streamlit resets widget state on rerun unless values are explicitly mirrored
+    to independent session-state keys.  This callback is wired to each settings
+    widget's on_change event so that period-navigation reruns (which trigger a
+    st.rerun()) do not discard the user's current filter selections.
+    """
     if 'ui_jitter'   in st.session_state: st.session_state.saved_jitter   = st.session_state.ui_jitter
     if 'ui_yscale'   in st.session_state: st.session_state.saved_yscale   = st.session_state.ui_yscale
     if 'ui_projects' in st.session_state: st.session_state.saved_projects = st.session_state.ui_projects
@@ -221,6 +253,18 @@ _data_max = pd.to_datetime(final_df['Date']).max().date() if not final_df.empty 
 LEGEND_OPTIONS = ["🚫 Hidden", "📁 By Project", "📋 All Models"]
 
 def apply_legend(fig, mode, inside=True):
+    """
+    Applies a legend configuration to a Plotly figure based on the selected display mode.
+
+    Args:
+        fig:    Plotly Figure object to modify in place.
+        mode:   One of LEGEND_OPTIONS — "🚫 Hidden", "📁 By Project", or "📋 All Models".
+                Hidden removes the legend entirely.  By Project collapses all traces for
+                a project code into a single legend entry.  All Models shows each trace
+                individually, grouped under its project code header.
+        inside: If True, positions the legend overlay inside the plot area; if False,
+                uses Plotly's default external positioning.
+    """
     if mode == "🚫 Hidden":
         fig.update_layout(showlegend=False)
         return
@@ -267,9 +311,33 @@ view_mode = st.query_params.get("view", "all").lower()
 VIEW_ORDER = ["Week", "Month", "Quarter", "All Time"]
 
 def get_nticks(view):
+    """Returns the target x-axis tick count for a given time-view granularity."""
     return {"Week": 5, "Month": 23, "Quarter": 14, "All Time": 20}.get(view, 20)
 
 def inline_title_nav(title, view_key, offset_key, set_fn, btn_prefix, data_min, data_max, extra_col=None):
+    """
+    Renders a single-row chart header combining a title, optional extra widget,
+    time-view selector buttons (Week / Month / Quarter / All Time), and
+    Prev / Next navigation arrows.
+
+    Args:
+        title:      Chart heading string displayed at the left of the row.
+        view_key:   Session-state key holding the current time-view label.
+        offset_key: Session-state key holding the signed period offset from today.
+        set_fn:     Callable(label) — invoked when a view button is clicked.
+        btn_prefix: Unique string prefix for all Streamlit button keys in this row.
+        data_min:   Earliest date present in the filtered dataset (disables Prev
+                    when the preceding period falls entirely before this date).
+        data_max:   Latest date present in the filtered dataset (disables Next
+                    when the following period starts after this date).
+        extra_col:  Optional (width, callable) tuple for injecting an additional
+                    widget (e.g. legend mode selector) between the title and the
+                    view buttons.
+
+    Returns:
+        Tuple (x_start, x_end, nticks) — the date range and tick count to apply
+        to the chart's x-axis for the currently selected period.
+    """
     _v = st.session_state[view_key]
     _o = st.session_state[offset_key]
 
@@ -416,7 +484,8 @@ with chart_col:
                 connectgaps=True, hovertemplate="<b>📅 Date:</b> %{x}<br><b>📈 KPI (Raw):</b> %{y:.4f}<br><extra></extra>"
             ))
 
-            # FIXED: Added dynamic height parameter scaled at 1.15x calculated layout boundaries to perfectly fill viewport space
+            # The summation chart is scaled at 1.15× the base height to utilise the additional
+            # vertical space available when the per-model lines are not present in this view.
             fig_sum.update_layout(
                 xaxis_title="<b>Date</b>", yaxis_title="<b>Total KPI</b>", showlegend=True, margin=dict(l=85, r=20, t=50, b=110), hovermode="closest", font=dict(size=13),
                 xaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), yaxis_title_font=dict(size=20, family="Arial-Bold, Arial"), hoverlabel=dict(font_size=16, font_family="Arial", align="left", namelength=-1),

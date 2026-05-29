@@ -1,3 +1,28 @@
+"""
+ClickUpQA.py — Automated QA Subtask and Documentation Generator
+
+For each parent task record in the Google Sheets master log that has an associated
+ClickUp task ID (column N) and at least one child model entry, this script:
+
+  1. Creates a ClickUp Doc containing a markdown QA checklist table with one row
+     per constituent model (columns: Model, QA Date, Reviewer).
+  2. Creates a subtask named "<task_name> - QA" under the parent ClickUp task,
+     with a description that embeds a direct link to the QA Doc.
+  3. Sets the Progression Status custom field on the new subtask to
+     "Review Markup QA".
+
+Idempotency: if any existing subtask under the parent already contains "QA" in
+its name, that parent task is skipped, preventing duplicate QA records on
+repeated runs.
+
+The Progression Status option ID is resolved lazily from the first successfully
+fetched task's custom-field metadata, avoiding an extra lookup API call.
+
+All ClickUp and Google Sheets API calls use exponential-backoff retry wrappers
+to handle transient rate-limit and server errors without manual intervention.
+
+Dependencies: gspread, google-auth, requests, python-dotenv
+"""
 import os
 import re
 import time
@@ -25,14 +50,40 @@ REVIEW_SUFFIX_RE = re.compile(
 
 
 def get_google_sheet_client():
+    """
+    Initialises and returns an authorised Google Spreadsheet client using a
+    service account key file (creds.json).
+
+    Returns:
+        gspread.client.Client: Authenticated gspread client instance scoped to
+        the Sheets API.
+    """
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_file("creds.json", scopes=scopes)
     return gspread.authorize(creds)
 
 
 def execute_with_retry(func, *args, **kwargs):
-    """Protects the pipeline from Google Write Quota limitations (429 errors).
-    Backoff schedule (base 15s): 15, 30, 60, 120, 240, 480, 960s."""
+    """
+    Executes a Google Sheets API call with exponential backoff to handle
+    write-quota rate limits (HTTP 429).
+
+    Retries up to 8 times with a base delay of 15 seconds, doubling on each
+    attempt plus a randomised jitter.  Backoff schedule: 15, 30, 60, 120, 240,
+    480, 960 seconds.  Non-429 errors are re-raised immediately.
+
+    Args:
+        func: Callable — the gspread API method to invoke.
+        *args: Positional arguments forwarded to func.
+        **kwargs: Keyword arguments forwarded to func.
+
+    Returns:
+        The return value of func on success.
+
+    Raises:
+        gspread.exceptions.APIError: If the error is not a rate-limit response,
+            or if the maximum retry count is exhausted.
+    """
     max_retries = 8
     base_delay = 15
     for attempt in range(max_retries):
@@ -44,9 +95,9 @@ def execute_with_retry(func, *args, **kwargs):
                 print(f" [!] Write quota limit hit (429). Retrying in {delay:.2f}s... (attempt {attempt + 1}/{max_retries})")
                 time.sleep(delay)
             else:
-                raise e
-        except Exception as e:
-            raise e
+                raise
+        except Exception:
+            raise
 
 
 def clickup_request(session, method, url, **kwargs):
